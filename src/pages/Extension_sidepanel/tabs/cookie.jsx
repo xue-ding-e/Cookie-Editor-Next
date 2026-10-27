@@ -146,6 +146,7 @@ const ShowCookie = () => {
                                                 // An empty refresh must not discard an open edit draft either.
                                                 <DetailCookie
                                                     key={`${tab.id}:${tab.url}`}
+                                                    tab={tab}
                                                     cookies={cookieInfo.length > 0 ? cookieInfo : undefined}
                                                 />
                                             )

@@ -46,5 +46,8 @@ jobs:
           if [ -f tests/cookie-tab-state.test.mjs ]; then
             node --test tests/cookie-tab-state.test.mjs
           fi
+          if [ -f tests/cookie-edit-handler.test.mjs ]; then
+            node --test tests/cookie-edit-handler.test.mjs
+          fi
       - name: Compile extension without installation or browser access
         run: npm run build
