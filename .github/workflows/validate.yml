@@ -33,5 +33,10 @@ jobs:
           if [ -f tests/popup-compatibility.test.mjs ]; then
             node --test tests/popup-compatibility.test.mjs
           fi
+      - name: Test pure text Cookie parsing when present
+        run: |
+          if [ -f tests/cookie-text-import.test.mjs ]; then
+            node --test tests/cookie-text-import.test.mjs
+          fi
       - name: Compile extension without installation or browser access
         run: npm run build
