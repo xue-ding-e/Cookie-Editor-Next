@@ -2,17 +2,6 @@
 
 import {n8nService} from "./services/n8n";
 
-chrome.sidePanel.setPanelBehavior({openPanelOnActionClick: true}).catch((error) => console.error(error));
-
-chrome.action.onClicked.addListener(async (tab) => {
-    chrome.sidePanel.setOptions({
-        tabId: tab.id,
-        path: "pages/sidepanel.html",
-        enabled: true
-    });
-    chrome.sidePanel.open({tabId: tab.id});
-});
-
 chrome.runtime.onInstalled.addListener(details => {
     if (details.reason === chrome.runtime.OnInstalledReason.INSTALL) {
         chrome.tabs.create({

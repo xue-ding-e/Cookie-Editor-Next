@@ -1,6 +1,6 @@
 {
-  "short_name": "Cookie Editor",
-  "name": "Cookie Editor",
+  "short_name": "Cookie Editor ChatGPT",
+  "name": "Cookie Editor (ChatGPT popup)",
   "description": "Simple yet powerful Cookie Editor that allow you to quickly create, edit and delete cookies without leaving your tab.",
   "icons": {
     "16": "icons/16x16.png",
@@ -14,25 +14,46 @@
       "32": "icons/32x32.png",
       "48": "icons/48x48.png",
       "128": "icons/128x128.png"
-    }
+    },
+    "default_popup": "pages/popup.html",
+    "default_title": "Cookie Editor (ChatGPT popup)"
   },
   "manifest_version": 3,
-  "version": "1.1.0.0",
+  "version": "1.1.0.1",
   "default_locale": "en",
-  "host_permissions": ["https://*/*", "http://*/*"],
-  "permissions": ["cookies", "sidePanel", "tabs"],
-  "optional_permissions": ["browsingData", "contextMenus", "storage", "alarms"],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "permissions": [
+    "cookies",
+    "tabs"
+  ],
+  "optional_permissions": [
+    "browsingData",
+    "contextMenus",
+    "storage",
+    "alarms"
+  ],
   "content_scripts": [
     {
       "all_frames": true,
-      "matches": ["https://wetab.org/*"],
-      "js": ["src/ads.js"],
+      "matches": [
+        "https://wetab.org/*"
+      ],
+      "js": [
+        "src/ads.js"
+      ],
       "run_at": "document_start"
     },
     {
       "all_frames": true,
-      "matches": ["<all_urls>"],
-      "js": ["src/content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content.js"
+      ],
       "run_at": "document_start"
     }
   ],
@@ -46,7 +67,9 @@
         "css/*",
         "scripts/*"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "content_security_policy": {
@@ -55,9 +78,6 @@
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
-  },
-  "side_panel": {
-    "default_path": "pages/sidepanel.html"
   },
   "options_ui": {
     "page": "pages/import.html",

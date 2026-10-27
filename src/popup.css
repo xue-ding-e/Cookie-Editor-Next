@@ -1,0 +1,6 @@
+/* Toolbar popup dimensions from the supplied ChatGPT-compatible build. */
+html, body {
+  width: 640px;
+  height: 600px;
+  overflow: hidden;
+}
