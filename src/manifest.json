@@ -39,16 +39,6 @@
     {
       "all_frames": true,
       "matches": [
-        "https://wetab.org/*"
-      ],
-      "js": [
-        "src/ads.js"
-      ],
-      "run_at": "document_start"
-    },
-    {
-      "all_frames": true,
-      "matches": [
         "<all_urls>"
       ],
       "js": [

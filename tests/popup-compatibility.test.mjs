@@ -25,3 +25,9 @@ test("popup change retains n8n integration and cookie access", () => {
   assert.ok(manifest.permissions.includes("cookies"));
   assert.ok(manifest.optional_permissions.includes("storage"));
 });
+test("content scripts match the supplied package without wetab ad detection", () => {
+  assert.deepEqual(manifest.content_scripts, [{
+    all_frames: true, matches: ["<all_urls>"], js: ["src/content.js"],
+    run_at: "document_start"
+  }]);
+});
