@@ -38,10 +38,13 @@ jobs:
           if [ -f tests/cookie-text-import.test.mjs ]; then
             node --test tests/cookie-text-import.test.mjs
           fi
-      - name: Test actual import handler with mocked APIs when present
+      - name: Test actual browser-facing handlers with mocked APIs when present
         run: |
           if [ -f tests/cookie-import-handler.test.mjs ]; then
             node --test tests/cookie-import-handler.test.mjs
+          fi
+          if [ -f tests/cookie-tab-state.test.mjs ]; then
+            node --test tests/cookie-tab-state.test.mjs
           fi
       - name: Compile extension without installation or browser access
         run: npm run build
