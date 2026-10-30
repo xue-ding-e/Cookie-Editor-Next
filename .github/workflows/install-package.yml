@@ -1,0 +1,117 @@
+name: Build and publish popup preview
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cookie-editor-next-installation
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'xue-ding-e/Cookie-Editor-Next' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
+    env:
+      VITE_WEBSITE: https://cookieeditor.org
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - run: node --test tests/*.test.mjs
+      - name: Run packaging regressions with a nonempty suite
+        run: |
+          python3 - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover('tests', pattern='test_package_extension.py')
+          assert suite.countTestCases() >= 8, 'Required packaging regressions missing'
+          result = unittest.TextTestRunner().run(suite)
+          raise SystemExit(not result.wasSuccessful())
+          PY
+      - run: npm run build
+      - name: Package exact source without browser access
+        id: package
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git diff --exit-code
+          python3 scripts/package-extension.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: popup-${{ github.sha }}
+          path: release-package/*
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    needs: build
+    if: github.repository == 'xue-ding-e/Cookie-Editor-Next' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: popup-${{ github.sha }}
+          path: package
+      - name: Validate downloaded identity and checksum
+        env:
+          EXPECTED_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, zipfile
+          root = pathlib.Path('package')
+          p = json.loads((root / 'build-provenance.json').read_text())
+          assert p['repository'] == os.environ['GITHUB_REPOSITORY'] == 'xue-ding-e/Cookie-Editor-Next'
+          assert p['source_sha'] == os.environ['GITHUB_SHA']
+          assert p['ci_run_id'] == os.environ['GITHUB_RUN_ID']
+          assert p['tag'] == os.environ['EXPECTED_TAG']
+          assert re.fullmatch(r'v\d+(?:\.\d+){0,3}-next\.build\.[0-9a-f]{12}', p['tag'])
+          assert p['artifact'] == 'Cookie-Editor-Next_' + p['source_sha'][:12] + '_unpacked.zip'
+          assert hashlib.sha256((root / p['artifact']).read_bytes()).hexdigest() == p['sha256']
+          assert (root / 'SHA256SUMS').read_text() == p['sha256'] + '  ' + p['artifact'] + '\n'
+          with zipfile.ZipFile(root / p['artifact']) as z:
+              assert z.testzip() is None and 'LICENSE' in z.namelist() and 'manifest.json' in z.namelist()
+              assert json.loads(z.read('manifest.json'))['version'] == p['manifest_version']
+          PY
+      - name: Publish immutable preview only after all validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite. Inspect its provenance before retrying.'
+            exit 1
+          fi
+          cat > notes.md <<EOF
+          Prebuilt popup-only Chromium extension from source $GITHUB_SHA.
+          Download the unpacked ZIP, verify SHA256SUMS, extract it and use Chrome/Edge Load unpacked if permitted by your browser/organization. Keep the folder; replace and reload for updates. No automatic browser-store update.
+          Source: https://github.com/$GITHUB_REPOSITORY/tree/$GITHUB_SHA
+          GPL-3.0; original work by Thanh Bui (buigiathanh) and upstream contributors. LICENSE included.
+          Requests cookies/tabs/HTTP(S) site access. Optional upstream n8n, analytics and sharing remain. No real Cookies used in tests.
+          Source regressions and build passed; actual browser installation, ChatGPT built-in browser and real-cookie behavior NOT verified. No signed CRX/store listing. Old sidepanel entry is unsupported.
+          Installation details: https://github.com/$GITHUB_REPOSITORY#安装-cookie-editor-next--install-this-next-edition
+          EOF
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" > tag.json 2>/dev/null; then
+            test "$(python3 -c 'import json; print(json.load(open("tag.json"))["object"]["sha"])')" = "$GITHUB_SHA"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" > tag.json
+            test "$(python3 -c 'import json; print(json.load(open("tag.json"))["object"]["sha"])')" = "$GITHUB_SHA"
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --title "Cookie-Editor-Next $TAG" --notes-file notes.md package/*.zip package/SHA256SUMS package/build-provenance.json
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir received
+          cmp package/SHA256SUMS received/SHA256SUMS
+          cmp package/build-provenance.json received/build-provenance.json
+          (cd received && sha256sum --check SHA256SUMS)
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$GITHUB_SHA"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$GITHUB_SHA"
