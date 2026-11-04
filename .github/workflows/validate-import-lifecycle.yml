@@ -1,0 +1,95 @@
+name: Validate Cookie import lifecycle
+
+on:
+  push:
+    branches: [ci/validate-cookie-import-lifecycle-20261104]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cookie-import-lifecycle-20261104
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.repository == 'xue-ding-e/Cookie-Editor-Next' && github.ref == 'refs/heads/ci/validate-cookie-import-lifecycle-20261104'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VITE_WEBSITE: https://cookieeditor.org
+      SOURCE_SHA: dfc7be7e72b22f5403c2fc54002b9dd94697ffa5
+      BASE_SHA: 1152047ae848ab9ed509f1d7761716d3b1431e33
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out the exact validation commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - name: Verify source identity and isolated validation control
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^^)" = "$BASE_SHA"
+          test "$(git show -s --format=%P HEAD | wc -w)" -eq 1
+          test "$(git show -s --format=%P HEAD^ | wc -w)" -eq 1
+          test "$(git diff --name-only "$SOURCE_SHA" HEAD)" = '.github/workflows/validate-import-lifecycle.yml'
+          git diff --exit-code
+          git log -3 --format='%H %T %P %s'
+          sha256sum package-lock.json
+      - name: Select Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install locked dependencies without lifecycle scripts
+        timeout-minutes: 5
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run actual React components and pure transformations
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test -- --reporter=default --reporter=json --outputFile=/tmp/cookie-vitest.json
+          python3 - <<'PY'
+          import json
+          result = json.load(open('/tmp/cookie-vitest.json'))
+          assert result['numTotalTests'] == 40, result
+          assert result['numPassedTests'] == 40, result
+          assert result['numFailedTests'] == 0, result
+          assert result['numPendingTests'] == 0, result
+          assert result['success'], result
+          print('React/Vitest: 40 passed, 0 failed, 0 pending')
+          PY
+      - name: Run every Node regression with synthetic browser APIs
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap tests/*.test.mjs | tee /tmp/cookie-node.tap
+          python3 - <<'PY'
+          import re
+          text = open('/tmp/cookie-node.tap').read()
+          for key, expected in [('tests', 67), ('pass', 67), ('fail', 0), ('cancelled', 0), ('skipped', 0), ('todo', 0)]:
+              actual = re.findall(r'^# ' + key + r' (\d+)$', text, re.MULTILINE)
+              assert actual == [str(expected)], (key, actual, expected)
+          print('Node: 67 passed, 0 failed, 0 skipped')
+          PY
+      - name: Validate packaging helpers without creating a release
+        timeout-minutes: 1
+        run: |
+          python3 - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover('tests', pattern='test_package_extension.py')
+          assert suite.countTestCases() == 8, 'Expected eight packaging regressions'
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          assert not result.skipped
+          raise SystemExit(not result.wasSuccessful())
+          PY
+      - name: Compile extension without browser access or publication
+        timeout-minutes: 3
+        run: npm run build
+      - name: Verify validation left tracked source unchanged
+        run: git diff --exit-code
