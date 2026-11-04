@@ -10,17 +10,34 @@ import {settingStore} from "../../../../../mobx/setting.store";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {parseCookieImport} from "../../../../../utils/cookie_text_import";
 
-const ImportCookie = () => {
+const ImportCookie = ({tab}) => {
     const ref = useRef(null);
-    useClickOutside(ref, () => settingStore.popup = "");
+    const mounted = useRef(false);
+    const importSession = useRef(0);
+    const importInProgress = useRef(false);
+    const [importing, setImporting] = useState(false);
+    useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
+    }, []);
+    const closeImporter = () => {
+        importSession.current++;
+        setCookies("");
+        setPassword("");
+        setContentImport("");
+        setLinkImport("");
+        setUrl(tab?.url ?? "");
+        settingStore.popup = "";
+    };
+    useClickOutside(ref, closeImporter);
 
     const format = settingStore.format_import;
     const optionImport = settingStore.option_import;
 
     const [password, setPassword] = useState("");
-    const [url, setUrl] = useState("");
+    const [url, setUrl] = useState(tab?.url ?? "");
     const [linkImport, setLinkImport] = useState("");
-    const [cookies, setCookies] = useState([]);
+    const [cookies, setCookies] = useState("");
     const [contentImport, setContentImport] = useState("");
 
     const listFormats = [
@@ -33,16 +50,28 @@ const ImportCookie = () => {
         const file = e.target.files[0];
         if (!file) return;
 
+        const session = importSession.current;
         const reader = new FileReader();
         reader.onload = (e) => {
-            let dataContent = e.target.result;
-            setContentImport(String(dataContent))
+            // A file selected before Cancel must not repopulate a later import dialog.
+            if (mounted.current && importSession.current === session && settingStore.popup === "import_cookie") {
+                setContentImport(String(e.target.result))
+            }
         };
 
         reader.readAsText(file);
     };
 
     const handleImport = async () => {
+        // Lock before any await; React may not have disabled the button for a second click yet.
+        if (importInProgress.current || settingStore.popup !== "import_cookie") return;
+        const session = importSession.current;
+        const sourceTabId = tab?.id;
+        const reloadSource = optionImport.includes("reload_page");
+        const isCurrentImporter = () => mounted.current && importSession.current === session &&
+            settingStore.popup === "import_cookie";
+        importInProgress.current = true;
+        setImporting(true);
         try {
             let dataCookies;
             switch (format) {
@@ -72,32 +101,30 @@ const ImportCookie = () => {
             for (const cookie of cookiesToSet) {
                 await chrome.cookies.set(cookie);
             }
-            settingStore.alert = {type: "info", message: extension.getLang("alert_import_cookie_success")}
-
-            document.dispatchEvent(new CustomEvent("update_cookie", {
-                detail: {action: "import"},
-                bubbles: true,
-            }));
-
-            if (optionImport.includes("reload_page")) {
-                const [tabCurrent] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
-                await chrome.tabs.reload(tabCurrent.id);
+            // Started writes are not rolled back on close. Their completion must not affect
+            // another tab's dialog or a newly opened import, and reload stays bound to the source.
+            if (isCurrentImporter()) {
+                settingStore.alert = {type: "info", message: extension.getLang("alert_import_cookie_success")}
+                document.dispatchEvent(new CustomEvent("update_cookie", {
+                    detail: {action: "import"},
+                    bubbles: true,
+                }));
+                if (isCurrentImporter()) {
+                    // Close before reload can remount the source tab's toolbar. The completed
+                    // Cookie writes remain successful even if the subsequent reload rejects.
+                    closeImporter();
+                    if (reloadSource && Number.isInteger(sourceTabId)) await chrome.tabs.reload(sourceTabId);
+                }
             }
             googleAnalytics({name: "import_cookie", params: []});
-            settingStore.popup = "";
-        } catch (e) {
-            console.log("import error", e)
-            settingStore.popup = "";
-            settingStore.alert = {type: "error", message: extension.getLang("alert_import_cookie_error")}
+        } catch {
+            // Keep the live draft available for correction or retry. No raw Cookie data is logged.
+            if (isCurrentImporter()) settingStore.alert = {type: "error", message: extension.getLang("alert_import_cookie_error")}
+        } finally {
+            importInProgress.current = false;
+            if (mounted.current) setImporting(false);
         }
     }
-
-    useEffect(() => {
-        (async () => {
-            const [tabCurrent] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
-            setUrl(tabCurrent.url)
-        })()
-    }, [])
 
     return (
         <>
@@ -126,6 +153,7 @@ const ImportCookie = () => {
                                         listFormats.map((item, key) => (
                                             <div key={key} className="inline-flex w-fit pr-3 items-center mb-4">
                                                 <input
+                                                    disabled={importing}
                                                     id={item.id}
                                                     type="radio"
                                                     value={item.value}
@@ -146,6 +174,7 @@ const ImportCookie = () => {
                                 </div>
                                 <div className={`w-full mb-5`}>
                                     <input
+                                        disabled={importing}
                                         type="text"
                                         onChange={(e) => setUrl(e.target.value)}
                                         className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2.5 mb-1"
@@ -160,7 +189,9 @@ const ImportCookie = () => {
                                                     Cookie value
                                                 </label>
                                                 <textarea
+                                                    disabled={importing}
                                                     rows={5}
+                                                    value={cookies}
                                                     onChange={(e) => setCookies(e.target.value)}
                                                     placeholder={"JSON/Header string/Netscape"}
                                                     className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2.5 mb-1"
@@ -176,6 +207,7 @@ const ImportCookie = () => {
                                                     {extension.getLang("label_select_file_import")}
                                                 </label>
                                                 <input
+                                                    disabled={importing}
                                                     onChange={handleFileChange}
                                                     accept=".txt, .json"
                                                     className="block w-full mb-5 text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none"
@@ -192,6 +224,7 @@ const ImportCookie = () => {
                                                     {extension.getLang("lable_link_import")} (<span className={"text-red-500"}>*</span>)
                                                 </label>
                                                 <input
+                                                    disabled={importing}
                                                     type="text"
                                                     placeholder={"http://example.com/cookie"}
                                                     onChange={(e) => setLinkImport(e.target.value)}
@@ -209,6 +242,7 @@ const ImportCookie = () => {
                                         {extension.getLang("label_password_decrypt")}
                                     </label>
                                     <input
+                                        disabled={importing}
                                         type="password"
                                         placeholder={extension.getLang("label_password_decrypt")}
                                         onChange={(e) => setPassword(e.target.value)}
@@ -222,6 +256,7 @@ const ImportCookie = () => {
                                 <div className={`w-full flex justify-between`}>
                                     <div className={"inline-block w-[59%]"}>
                                         <button
+                                            disabled={importing}
                                             onClick={handleImport}
                                             className={`h-[40px] w-full rounded-[10px] bg-blue-500 text-white px-5`}>
                                             {extension.getLang("btn_import")}
@@ -229,7 +264,7 @@ const ImportCookie = () => {
                                     </div>
                                     <div className={"inline-block w-[39%]"}>
                                         <button
-                                            onClick={() => settingStore.popup = ""}
+                                            onClick={closeImporter}
                                             className={`h-[40px] w-full rounded-[10px] bg-gray-200 text-gray-900 px-5`}>
                                             {extension.getLang("btn_cancel")}
                                         </button>
