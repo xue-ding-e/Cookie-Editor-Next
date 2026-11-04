@@ -8,7 +8,7 @@ import {parseCookieImport} from "../src/utils/cookie_text_import.js";
 const source = readFileSync(new URL("../src/pages/Extension_sidepanel/components/popup/import_cookie/index.jsx", import.meta.url), "utf8");
 const marker = "    const handleImport = ";
 const start = source.indexOf(marker);
-const end = source.indexOf("    useEffect(", start);
+const end = source.indexOf("    return (", start);
 assert.ok(start >= 0 && end > start, "component handler boundaries must remain identifiable");
 const handlerSource = source.slice(start + marker.length, end).trim();
 
@@ -18,6 +18,9 @@ async function runImport(input, rejectWrite = false) {
     const store = {popup: "import_cookie"};
     const context = {
         parseCookieImport,
+        tab: {id: 101, url: "https://example.invalid/"},
+        mounted: {current: true}, importSession: {current: 0}, importInProgress: {current: false},
+        setImporting: () => {}, closeImporter: () => { store.popup = ""; },
         format: "text", cookies: input, password: "", url: "https://example.invalid/",
         optionImport: [], settingStore: store,
         extension: {getLang: key => key},

@@ -11,7 +11,7 @@ import {googleAnalytics} from "../../../utils/google_analytics";
 // Only unrelated toolbar controls, animation, the store fixture and API boundaries are replaced.
 vi.mock("../components/top_action", async () => {
     const {default: ImportCookie} = await import("../components/popup/import_cookie");
-    return {default: () => <ImportCookie />};
+    return {default: ({tab}) => <ImportCookie tab={tab}/>};
 });
 vi.mock("../../../mobx/setting.store", async () => {
     const {makeAutoObservable} = await import("mobx");
@@ -39,6 +39,8 @@ let chromeMock;
 beforeEach(() => {
     googleAnalytics.mockClear();
     runInAction(() => {
+        settingStore.format_import = "text";
+        settingStore.option_import = [];
         settingStore.popup = "";
         settingStore.cookie_select = {};
         settingStore.alert = {};
@@ -188,7 +190,7 @@ it("binds the actual edit to its displayed tab/profile and disables edits and re
     const value = await openEdit();
     fireEvent.change(value, {target: {value: "submitted-fixture"}});
     fireEvent.change(screen.getByLabelText("Name"), {target: {value: "renamed-fixture"}});
-    // The mounted ImportCookie toolbar also queries once during initialization.
+    // Saving must not issue a fresh active-tab query.
     const queriesBeforeSave = chromeMock.tabs.query.mock.calls.length;
     // A fresh active-tab query would now return a different tab: saving must not make it.
     chromeMock.tabs.query.mockResolvedValue([{id: 2, url: "https://second.invalid/"}]);
@@ -292,4 +294,176 @@ it("does not close a reopened actual editor when the cancelled save finishes", a
     expect(settingStore.alert).toEqual({});
     expect(screen.getByLabelText("Value")).toBe(reopened);
     expect(reopened).not.toBeDisabled();
+});
+
+it("locks the actual import draft and prevents another submission while its write is pending", async () => {
+    const write = deferred();
+    chromeMock.cookies.set.mockReturnValueOnce(write.promise);
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: "fixture=synthetic"}});
+    const submit = screen.getByText("btn_import");
+    fireEvent.click(submit);
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    expect(draft).toBeDisabled();
+    expect(submit).toBeDisabled();
+    expect(screen.getByPlaceholderText("label_password_decrypt")).toBeDisabled();
+    await userEvent.type(draft, "ignored-pending-draft");
+    fireEvent.click(submit);
+    expect(draft).toHaveValue("fixture=synthetic");
+    expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1);
+    await act(async () => write.resolve({}));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+});
+
+it("does not let a cancelled actual import close a reopened importer", async () => {
+    const write = deferred();
+    chromeMock.cookies.set.mockReturnValueOnce(write.promise);
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: "fixture=synthetic"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByText("btn_cancel"));
+    act(() => runInAction(() => { settingStore.popup = "import_cookie"; settingStore.alert = {type: "info", message: "new-import-fixture"}; }));
+    const reopened = screen.getByPlaceholderText("JSON/Header string/Netscape");
+    expect(reopened).toHaveValue("");
+    const readsBefore = chromeMock.cookies.getAll.mock.calls.length;
+    await act(async () => write.resolve({}));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(settingStore.alert.message).toBe("new-import-fixture");
+    expect(screen.getByPlaceholderText("JSON/Header string/Netscape")).toBe(reopened);
+    expect(reopened).not.toBeDisabled();
+    expect(chromeMock.cookies.getAll).toHaveBeenCalledTimes(readsBefore);
+    expect(chromeMock.tabs.reload).not.toHaveBeenCalled();
+    fireEvent.change(reopened, {target: {value: "fixture=new-import-value"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledTimes(2);
+    expect(chromeMock.cookies.set).toHaveBeenLastCalledWith(expect.objectContaining({value: "new-import-value"}));
+});
+
+it("does not let A's completed import close or refresh B's importer or reload B", async () => {
+    const write = deferred();
+    chromeMock.cookies.set.mockReturnValueOnce(write.promise);
+    const draftA = await openImport();
+    act(() => runInAction(() => { settingStore.option_import = ["reload_page"]; }));
+    fireEvent.change(draftA, {target: {value: "fixture=synthetic-a"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    chromeMock.tabs.query.mockResolvedValue([{id: 2, url: "https://second.invalid/"}]);
+    chromeMock.cookies.getAll.mockResolvedValue([{...fixture, name: "second-cookie", domain: "second.invalid"}]);
+    await act(async () => chromeMock.tabs.onActivated.addListener.mock.calls[0][0]());
+    await screen.findByText("second-cookie");
+    act(() => runInAction(() => { settingStore.popup = "import_cookie"; settingStore.alert = {type: "info", message: "import-b-fixture"}; }));
+    const draftB = screen.getByPlaceholderText("JSON/Header string/Netscape");
+    fireEvent.change(draftB, {target: {value: "fixture=unsaved-b"}});
+    const readsBefore = chromeMock.cookies.getAll.mock.calls.length;
+    await act(async () => write.resolve({}));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({url: "https://example.invalid/", value: "synthetic-a"}));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(settingStore.alert.message).toBe("import-b-fixture");
+    expect(screen.getByPlaceholderText("JSON/Header string/Netscape")).toBe(draftB);
+    expect(draftB).toHaveValue("fixture=unsaved-b");
+    expect(chromeMock.cookies.getAll).toHaveBeenCalledTimes(readsBefore);
+    expect(chromeMock.tabs.reload).not.toHaveBeenCalled();
+});
+
+it("keeps a rejected actual import draft open, re-enables it and allows retry", async () => {
+    chromeMock.cookies.set.mockRejectedValueOnce(new Error("Synthetic import failure"));
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: "fixture=retry-value"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(draft).toHaveValue("fixture=retry-value");
+    expect(draft).not.toBeDisabled();
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledTimes(2);
+    expect(settingStore.alert.type).toBe("info");
+});
+
+it("does not let an outside-dismissed import rejection affect the reopened importer", async () => {
+    const write = deferred();
+    chromeMock.cookies.set.mockReturnValueOnce(write.promise);
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: "fixture=old-import"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    // Exercise the real document listener rather than calling the close helper directly.
+    fireEvent.mouseDown(document.body);
+    expect(settingStore.popup).toBe("");
+    act(() => runInAction(() => { settingStore.popup = "import_cookie"; settingStore.alert = {type: "info", message: "reopened-import"}; }));
+    const reopened = screen.getByPlaceholderText("JSON/Header string/Netscape");
+    expect(reopened).toHaveValue("");
+    expect(reopened).toBeDisabled();
+    const readsBefore = chromeMock.cookies.getAll.mock.calls.length;
+    await act(async () => write.reject(new Error("Synthetic stale write failure")));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(settingStore.alert.message).toBe("reopened-import");
+    expect(screen.getByPlaceholderText("JSON/Header string/Netscape")).toBe(reopened);
+    expect(reopened).not.toBeDisabled();
+    expect(chromeMock.cookies.getAll).toHaveBeenCalledTimes(readsBefore);
+    expect(chromeMock.tabs.reload).not.toHaveBeenCalled();
+});
+
+it("does not let a pending source reload rejection affect a reopened importer", async () => {
+    const reload = deferred();
+    chromeMock.tabs.reload.mockReturnValueOnce(reload.promise);
+    const draft = await openImport();
+    act(() => runInAction(() => { settingStore.option_import = ["reload_page"]; }));
+    fireEvent.change(draft, {target: {value: "fixture=completed-import"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(chromeMock.tabs.reload).toHaveBeenCalledExactlyOnceWith(1));
+    expect(settingStore.popup).toBe("");
+    expect(settingStore.alert.message).toBe("alert_import_cookie_success");
+    act(() => runInAction(() => { settingStore.popup = "import_cookie"; settingStore.alert = {type: "info", message: "new-import-after-reload"}; }));
+    const reopened = screen.getByPlaceholderText("JSON/Header string/Netscape");
+    expect(reopened).toHaveValue("");
+    expect(reopened).toBeDisabled();
+    const readsBefore = chromeMock.cookies.getAll.mock.calls.length;
+    await act(async () => reload.reject(new Error("Synthetic delayed reload failure")));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(settingStore.alert.message).toBe("new-import-after-reload");
+    expect(screen.getByPlaceholderText("JSON/Header string/Netscape")).toBe(reopened);
+    expect(reopened).not.toBeDisabled();
+    expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1);
+    expect(chromeMock.cookies.getAll).toHaveBeenCalledTimes(readsBefore);
+    expect(chromeMock.tabs.reload).toHaveBeenCalledTimes(1);
+});
+
+it("closes the completed importer before its source reload rebuilds the toolbar", async () => {
+    chromeMock.tabs.reload.mockImplementationOnce(async id => {
+        expect(settingStore.popup).toBe("");
+        chromeMock.tabs.onUpdated.addListener.mock.calls[0][0](id, {status: "complete"});
+    });
+    const draft = await openImport();
+    act(() => runInAction(() => { settingStore.option_import = ["reload_page"]; }));
+    fireEvent.change(draft, {target: {value: "fixture=reload-value"}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(chromeMock.tabs.reload).toHaveBeenCalledExactlyOnceWith(1));
+    await screen.findByPlaceholderText("placeholder_search");
+    expect(settingStore.popup).toBe("");
+    expect(screen.queryByPlaceholderText("JSON/Header string/Netscape")).not.toBeInTheDocument();
+});
+
+it("rejects a cancelled file read's late content when the importer is reopened", async () => {
+    const readers = [];
+    vi.stubGlobal("FileReader", class { constructor() { readers.push(this); } readAsText() {} });
+    await openImport();
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    fireEvent.change(document.querySelector('input[type="file"]'), {target: {files: [new File(["fixture=old-file"], "old-fixture.txt")]}});
+    fireEvent.click(screen.getByText("btn_cancel"));
+    act(() => runInAction(() => { settingStore.popup = "import_cookie"; }));
+    act(() => readers[0].onload({target: {result: "fixture=old-file"}}));
+    // Submit before choosing another file, so a later valid read cannot mask stale data.
+    // The existing parser accepts an empty file as zero Cookies and closes successfully.
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    act(() => runInAction(() => { settingStore.popup = "import_cookie"; }));
+    fireEvent.change(document.querySelector('input[type="file"]'), {target: {files: [new File(["fixture=new-file"], "new-fixture.txt")]}});
+    act(() => readers[1].onload({target: {result: "fixture=new-file"}}));
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new-file"}));
 });
