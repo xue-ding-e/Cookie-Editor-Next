@@ -172,6 +172,7 @@ function createDraftHarness() {
     const mounted = {current: true}, importSession = {current: 0}, importInProgress = {current: true};
     const readers = [];
     const context = {mounted, importSession, importInProgress, settingStore: store, tab: {url: 'https://source.invalid/'},
+        fileReadVersion: {current: 0}, fileReadInProgress: {current: false}, setReadingFile() {},
         FileReader: class { constructor() { readers.push(this); } readAsText() {} },
     };
     for (const key of Object.keys(state)) context['set' + key[0].toUpperCase() + key.slice(1)] = value => { state[key] = value; };

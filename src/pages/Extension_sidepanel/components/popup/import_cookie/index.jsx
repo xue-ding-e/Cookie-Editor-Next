@@ -15,13 +15,19 @@ const ImportCookie = ({tab}) => {
     const mounted = useRef(false);
     const importSession = useRef(0);
     const importInProgress = useRef(false);
+    const fileReadVersion = useRef(0);
+    const fileReadInProgress = useRef(false);
     const [importing, setImporting] = useState(false);
+    const [readingFile, setReadingFile] = useState(false);
     useEffect(() => {
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
     const closeImporter = () => {
         importSession.current++;
+        fileReadVersion.current++;
+        fileReadInProgress.current = false;
+        setReadingFile(false);
         setCookies("");
         setPassword("");
         setContentImport("");
@@ -48,23 +54,46 @@ const ImportCookie = ({tab}) => {
 
     const handleFileChange = (e) => {
         const file = e.target.files[0];
+        const version = ++fileReadVersion.current;
+        // A new selection invalidates the old content before its asynchronous read starts.
+        setContentImport("");
+        fileReadInProgress.current = !!file;
+        setReadingFile(!!file);
         if (!file) return;
 
         const session = importSession.current;
         const reader = new FileReader();
+        const isCurrentRead = () => mounted.current && importSession.current === session &&
+            fileReadVersion.current === version && settingStore.popup === "import_cookie";
+        const finishRead = () => {
+            fileReadInProgress.current = false;
+            setReadingFile(false);
+        };
         reader.onload = (e) => {
             // A file selected before Cancel must not repopulate a later import dialog.
-            if (mounted.current && importSession.current === session && settingStore.popup === "import_cookie") {
-                setContentImport(String(e.target.result))
+            // Nor may an older, slower file replace the latest selection in the same dialog.
+            if (isCurrentRead()) {
+                setContentImport(String(e.target.result ?? ""));
+                finishRead();
             }
         };
-
-        reader.readAsText(file);
+        reader.onerror = reader.onabort = () => {
+            if (isCurrentRead()) {
+                finishRead();
+                settingStore.alert = {type: "error", message: extension.getLang("alert_import_cookie_error")};
+            }
+        };
+        try {
+            reader.readAsText(file);
+        } catch {
+            reader.onerror();
+        }
     };
 
     const handleImport = async () => {
         // Lock before any await; React may not have disabled the button for a second click yet.
         if (importInProgress.current || settingStore.popup !== "import_cookie") return;
+        if (format === "file" && (fileReadInProgress.current || !contentImport.trim())) return;
         const session = importSession.current;
         const sourceTabId = tab?.id;
         const reloadSource = optionImport.includes("reload_page");
@@ -256,7 +285,7 @@ const ImportCookie = ({tab}) => {
                                 <div className={`w-full flex justify-between`}>
                                     <div className={"inline-block w-[59%]"}>
                                         <button
-                                            disabled={importing}
+                                            disabled={importing || (format === "file" && (readingFile || !contentImport.trim()))}
                                             onClick={handleImport}
                                             className={`h-[40px] w-full rounded-[10px] bg-blue-500 text-white px-5`}>
                                             {extension.getLang("btn_import")}

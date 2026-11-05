@@ -456,14 +456,68 @@ it("rejects a cancelled file read's late content when the importer is reopened",
     act(() => runInAction(() => { settingStore.popup = "import_cookie"; }));
     act(() => readers[0].onload({target: {result: "fixture=old-file"}}));
     // Submit before choosing another file, so a later valid read cannot mask stale data.
-    // The existing parser accepts an empty file as zero Cookies and closes successfully.
+    // No selected, completed file means there is nothing safe to submit.
     fireEvent.click(screen.getByText("btn_import"));
-    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    expect(settingStore.popup).toBe("import_cookie");
     expect(chromeMock.cookies.set).not.toHaveBeenCalled();
-    act(() => runInAction(() => { settingStore.popup = "import_cookie"; }));
     fireEvent.change(document.querySelector('input[type="file"]'), {target: {files: [new File(["fixture=new-file"], "new-fixture.txt")]}});
     act(() => readers[1].onload({target: {result: "fixture=new-file"}}));
     fireEvent.click(screen.getByText("btn_import"));
     await waitFor(() => expect(settingStore.popup).toBe(""));
     expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new-file"}));
+});
+
+async function openFileImport() {
+    const readers = [];
+    vi.stubGlobal("FileReader", class {constructor() {readers.push(this);} readAsText() {}});
+    await openImport();
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    const select = name => fireEvent.change(document.querySelector('input[type="file"]'), {
+        target: {files: [new File(["synthetic"], `${name}.txt`)]},
+    });
+    return {readers, select, finish: (index, value) => act(() => readers[index].onload({target: {result: value}}))};
+}
+
+it("imports only the latest selected file when older reads complete out of order", async () => {
+    const h = await openFileImport(); h.select("old"); h.select("new");
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    h.finish(1, "fixture=new-file"); h.finish(0, "fixture=old-file");
+    expect(screen.getByText("btn_import")).not.toBeDisabled();
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new-file"}));
+});
+
+it("blocks stale file submission while reading a replacement but allows another selection", async () => {
+    const h = await openFileImport(); h.select("old"); h.finish(0, "fixture=old-file");
+    h.select("new");
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    expect(document.querySelector('input[type="file"]')).not.toBeDisabled();
+    fireEvent.click(screen.getByText("btn_import"));
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    h.finish(1, "fixture=new-file"); fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new-file"}));
+});
+
+it("keeps a failed selected file un-submittable and supports choosing a replacement", async () => {
+    const h = await openFileImport(); h.select("old"); h.finish(0, "fixture=old-file");
+    h.select("failed"); act(() => h.readers[1].onerror());
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    expect(settingStore.alert.type).toBe("error");
+    fireEvent.click(screen.getByText("btn_import")); expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    h.select("retry"); h.finish(2, "fixture=retry"); fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "retry"}));
+});
+
+it("permits text import while an unrelated file read is pending", async () => {
+    const h = await openFileImport(); h.select("pending");
+    fireEvent.click(screen.getByLabelText("Use text"));
+    fireEvent.change(screen.getByPlaceholderText("JSON/Header string/Netscape"), {target: {value: "fixture=text"}});
+    expect(screen.getByText("btn_import")).not.toBeDisabled();
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe("")); h.finish(0, "fixture=discarded");
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "text"}));
 });
