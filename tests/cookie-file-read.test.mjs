@@ -30,9 +30,17 @@ function harness({throwOnRead = false} = {}) {
         context['set' + key[0].toUpperCase() + key.slice(1)] = value => {context[key] = value;};
     }
     context.closeImporter = vm.runInNewContext(`(${handler('closeImporter', '    useClickOutside(')})`, context);
+    context.settingStore.setFormatImport = value => {context.format = value;};
+    // Evaluate the actual radio binding, whether inline or a named production handler.
+    const binding = source.match(/name="format"\s+onClick=\{([\s\S]*?)\}\s+checked=/)?.[1];
+    assert.ok(binding, 'The format radio must expose its real click handler');
+    const formatHandler = /^[A-Za-z_$][\w$]*$/.test(binding)
+        ? handler(binding, '    const handleFileChange = ') : binding;
+    const changeFormat = vm.runInNewContext(`(${formatHandler})`, context);
     const select = vm.runInNewContext(`(${handler('handleFileChange', '    const handleImport = ')})`, context);
     const run = vm.runInNewContext(`(${handler('handleImport', '    return (')})`, context);
-    return {context, readers, writes, run, select: (files = [{}]) => select({target: {files}}),
+    return {context, readers, writes, run, changeFormat: value => changeFormat({target: {value}}),
+        select: (files = [{}]) => select({target: {files}}),
         finish: (index, value) => readers[index].onload({target: {result: value}})};
 }
 
@@ -102,4 +110,37 @@ test('an unmounted importer ignores file completion and failure', () => {
     h.finish(0, 'fixture=discarded'); h.readers[0].onerror();
     assert.equal(h.context.contentImport, ''); assert.equal(h.context.settingStore.alert, undefined);
     assert.equal(h.writes.length, 0);
+});
+
+test('format switch discards a completed file before returning to file mode', async () => {
+    const h = harness(); h.select(); h.finish(0, 'fixture=old');
+    h.changeFormat('text'); h.changeFormat('file'); await h.run();
+    assert.equal(h.writes.length, 0); assert.equal(h.context.contentImport, '');
+    assert.equal(h.context.settingStore.popup, 'import_cookie');
+});
+
+for (const event of ['onload', 'onerror', 'onabort']) test(`format switch invalidates a pending file's ${event} without affecting a later selection`, async () => {
+    const h = harness(); h.select(); h.changeFormat('text'); h.changeFormat('file');
+    h.readers[0][event]({target: {result: 'fixture=old'}});
+    assert.equal(h.context.contentImport, ''); assert.equal(h.context.readingFile, false);
+    assert.equal(h.context.settingStore.alert, undefined);
+    await h.run(); assert.equal(h.writes.length, 0);
+    h.select(); h.readers[0][event]({target: {result: 'fixture=old'}});
+    assert.equal(h.context.contentImport, ''); assert.equal(h.context.readingFile, true);
+    assert.equal(h.context.settingStore.alert, undefined);
+    await h.run(); assert.equal(h.writes.length, 0);
+    h.finish(1, 'fixture=current'); await h.run(); assert.equal(h.writes[0].value, 'current');
+});
+
+test('format switch to the already selected mode retains the current file', async () => {
+    const h = harness(); h.select(); h.finish(0, 'fixture=current');
+    h.changeFormat('file'); await h.run();
+    assert.equal(h.writes.length, 1); assert.equal(h.writes[0].value, 'current');
+});
+
+test('format switch clears hidden file state while preserving the independent text draft', async () => {
+    const h = harness(); h.context.cookies = 'fixture=text-draft'; h.select();
+    h.changeFormat('text'); h.finish(0, 'fixture=discarded');
+    assert.equal(h.context.contentImport, ''); assert.equal(h.context.readingFile, false);
+    await h.run(); assert.equal(h.writes.length, 1); assert.equal(h.writes[0].value, 'text-draft');
 });

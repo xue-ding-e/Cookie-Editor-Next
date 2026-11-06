@@ -521,3 +521,65 @@ it("permits text import while an unrelated file read is pending", async () => {
     await waitFor(() => expect(settingStore.popup).toBe("")); h.finish(0, "fixture=discarded");
     expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "text"}));
 });
+
+it("discards a completed file when switching away and back to an empty file input", async () => {
+    const h = await openFileImport();
+    h.select("old");
+    h.finish(0, "fixture=old-file");
+    const originalInput = document.querySelector('input[type="file"]');
+    fireEvent.click(screen.getByLabelText("Use text"));
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    const emptyInput = document.querySelector('input[type="file"]');
+    expect(emptyInput).not.toBe(originalInput);
+    expect(emptyInput.files).toHaveLength(0);
+    fireEvent.click(screen.getByText("btn_import"));
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    expect(settingStore.popup).toBe("import_cookie");
+});
+
+it.each(["onload", "onerror", "onabort"])("ignores a pending file's %s after switching away and back, then accepts a new selection", async event => {
+    const h = await openFileImport();
+    h.select("old");
+    fireEvent.click(screen.getByLabelText("Use text"));
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    const priorAlert = {...settingStore.alert};
+    act(() => h.readers[0][event]({target: {result: "fixture=old-file"}}));
+    expect(document.querySelector('input[type="file"]').files).toHaveLength(0);
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    expect({...settingStore.alert}).toEqual(priorAlert);
+    fireEvent.click(screen.getByText("btn_import"));
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    h.select("new");
+    h.finish(1, "fixture=new-file");
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new-file"}));
+});
+
+it("keeps the selected file when clicking the already active file format", async () => {
+    const h = await openFileImport();
+    h.select("selected");
+    h.finish(0, "fixture=selected");
+    const fileInput = document.querySelector('input[type="file"]');
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    expect(document.querySelector('input[type="file"]')).toBe(fileInput);
+    expect(screen.getByText("btn_import")).not.toBeDisabled();
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "selected"}));
+});
+
+it("retains the independent text draft while discarding a file on format change", async () => {
+    const h = await openFileImport();
+    fireEvent.click(screen.getByLabelText("Use text"));
+    fireEvent.change(screen.getByPlaceholderText("JSON/Header string/Netscape"), {target: {value: "fixture=text-draft"}});
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    h.select("pending");
+    fireEvent.click(screen.getByLabelText("Use text"));
+    h.finish(0, "fixture=discarded");
+    expect(screen.getByPlaceholderText("JSON/Header string/Netscape")).toHaveValue("fixture=text-draft");
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "text-draft"}));
+});

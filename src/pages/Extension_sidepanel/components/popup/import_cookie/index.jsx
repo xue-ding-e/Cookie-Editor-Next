@@ -52,6 +52,19 @@ const ImportCookie = ({tab}) => {
         // {title: "Use a link", id: "import_from_url", value: "link"}
     ];
 
+    const handleFormatChange = (e) => {
+        const nextFormat = e.target.value;
+        if (format === "file" && nextFormat !== "file") {
+            // Switching away unmounts the native file input. Its hidden content and
+            // pending callbacks must not survive when an empty input is mounted later.
+            fileReadVersion.current++;
+            fileReadInProgress.current = false;
+            setReadingFile(false);
+            setContentImport("");
+        }
+        settingStore.setFormatImport(nextFormat);
+    };
+
     const handleFileChange = (e) => {
         const file = e.target.files[0];
         const version = ++fileReadVersion.current;
@@ -187,7 +200,7 @@ const ImportCookie = ({tab}) => {
                                                     type="radio"
                                                     value={item.value}
                                                     name="format"
-                                                    onClick={(e) => settingStore.setFormatImport(e.target.value)}
+                                                    onClick={handleFormatChange}
                                                     checked={format === item.value}
                                                     className="w-4 h-4 text-blue-600 bg-gray-400 border-gray-300 focus:ring-blue-500"
                                                 />
