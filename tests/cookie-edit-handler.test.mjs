@@ -54,7 +54,7 @@ function createHarness({query, remove, set, tab = tabA} = {}) {
     render();
     return {
         calls, store, save: () => handles.handleActionEditCookie(), close: () => outside(),
-        edit: (name, value) => handles.handleEditCookie(name, value),
+        edit: (name, value, valid) => handles.handleEditCookie(name, value, valid),
         select(cookie = fixture("fixture-b"), nextTab = {id: 2, url: "https://second.invalid/"}) {
             store.cookie_select = {...cookie}; store.popup = "edit_cookie";
             props = {cookie: {...cookie}, tab: nextTab}; render();
@@ -201,7 +201,7 @@ test("an unavailable source tab causes zero writes and an actionable error", asy
     assert.equal(h.store.popup, "edit_cookie");
 });
 
-for (const input of ["not a date", ""]) test(`an invalid expiration draft ${JSON.stringify(input)} causes zero mutations`, async () => {
+for (const input of ["not a date"]) test(`an invalid expiration draft ${JSON.stringify(input)} causes zero mutations`, async () => {
     const h = createHarness();
     h.edit("expirationDate", input);
     assert.equal(Number.isNaN(h.store.cookie_select.expirationDate), true);
@@ -232,4 +232,34 @@ test("a finite zero expiration remains an explicit supported value", async () =>
     assert.equal(h.calls.set.length, 1);
     assert.equal(h.calls.set[0].expirationDate, 0);
     assert.equal(h.store.alert.type, "info");
+});
+
+test("clearing expiration saves the session default rather than an invalid number", async () => {
+    const h = createHarness();
+    h.store.cookie_select.expirationDate = 1893456000;
+    h.edit("expirationDate", "");
+    await h.save();
+    assert.equal(h.calls.set.length, 1);
+    assert.equal(h.calls.set[0].expirationDate, undefined);
+    assert.equal(h.calls.remove.length, 0);
+});
+
+test("a session Cookie can receive a local timestamp with seconds", async () => {
+    const h = createHarness();
+    h.store.cookie_select.session = true;
+    h.edit("expirationDate", "2030-02-13T04:05:06");
+    await h.save();
+    assert.equal(h.calls.set.length, 1);
+    assert.equal(h.calls.set[0].expirationDate, new Date(2030, 1, 13, 4, 5, 6).getTime() / 1000);
+    assert.equal(h.calls.remove.length, 0);
+});
+
+test("an invalid empty native date cannot be treated as an explicit session request", async () => {
+    const h = createHarness();
+    h.edit("expirationDate", "", false);
+    await h.save();
+    assert.equal(Number.isNaN(h.store.cookie_select.expirationDate), true);
+    assert.equal(h.calls.set.length, 0);
+    assert.equal(h.calls.remove.length, 0);
+    assert.equal(h.store.alert.type, "error");
 });

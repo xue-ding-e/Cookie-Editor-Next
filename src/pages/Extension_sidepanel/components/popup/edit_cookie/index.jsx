@@ -12,6 +12,7 @@ import {canSetCookieWithoutRemoval} from "../../../../../utils/cookie_edit";
 
 const EditCookie = ({cookie, tab}) => {
     const ref = useRef(null);
+    const expirationInput = useRef(null);
     const mounted = useRef(false);
     const currentCookie = useRef(cookie);
     const editorSession = useRef(0);
@@ -31,21 +32,21 @@ const EditCookie = ({cookie, tab}) => {
     useClickOutside(ref, closeEditor);
 
     const handleFormatDate = (time) => {
-        return !time ? "" : new Date(time * 1000)
-            .toLocaleString('en-GB', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            })
+        if (!Number.isFinite(time)) return "";
+        const date = new Date(time * 1000);
+        if (!Number.isFinite(date.getTime())) return "";
+        const pad = value => String(value).padStart(2, "0");
+        // datetime-local uses local calendar fields, not a UTC ISO string or locale-formatted text.
+        // Only display the timestamp here; untouched fractional seconds and DST offsets stay intact.
+        return `${String(date.getFullYear()).padStart(4, "0")}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     }
 
-    const handleEditCookie = (param, value) => {
+    const handleEditCookie = (param, value, valid = true) => {
         if (saveInProgress.current) return;
         if (param === "expirationDate") {
-            settingStore.cookie_select.expirationDate = settingStore.cookie_select.session ? "" : Math.round(new Date(value).getTime() / 1000)
+            // An incomplete native date is not an explicit request to clear its expiration.
+            settingStore.cookie_select.expirationDate = !valid ? NaN :
+                value === "" ? undefined : Math.round(new Date(value).getTime() / 1000);
         } else if (param === "httpOnly" || param === "secure" || param === "hostOnly") {
             settingStore.cookie_select[param] = value === "true";
         } else {
@@ -64,7 +65,9 @@ const EditCookie = ({cookie, tab}) => {
             return;
         }
         // Validate before removal: an invalid date draft must not delete the original Cookie.
-        if (selection.expirationDate !== undefined && !Number.isFinite(selection.expirationDate)) {
+        // Native segmented input can become invalid before React receives a change event.
+        if ((expirationInput.current && !expirationInput.current.validity.valid) ||
+            (selection.expirationDate !== undefined && !Number.isFinite(selection.expirationDate))) {
             settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
             return;
         }
@@ -168,8 +171,10 @@ const EditCookie = ({cookie, tab}) => {
                                             Expiration Date
                                         </label>
                                         <input
-                                            type="text"
-                                            onChange={(e) => handleEditCookie("expirationDate", e.target.value)}
+                                            ref={expirationInput}
+                                            type="datetime-local"
+                                            step="1"
+                                            onChange={(e) => handleEditCookie("expirationDate", e.target.value, e.target.validity.valid)}
                                             id="expirationDate"
                                             disabled={saving}
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2"
