@@ -15,6 +15,7 @@ function handler(name, next) {
 }
 function harness({throwOnRead = false} = {}) {
     const readers = [], writes = [];
+    const input = {files: [], value: ''};
     const context = {
         mounted: {current: true}, importSession: {current: 0}, importInProgress: {current: false},
         fileReadVersion: {current: 0}, fileReadInProgress: {current: false},
@@ -39,8 +40,8 @@ function harness({throwOnRead = false} = {}) {
     const changeFormat = vm.runInNewContext(`(${formatHandler})`, context);
     const select = vm.runInNewContext(`(${handler('handleFileChange', '    const handleImport = ')})`, context);
     const run = vm.runInNewContext(`(${handler('handleImport', '    return (')})`, context);
-    return {context, readers, writes, run, changeFormat: value => changeFormat({target: {value}}),
-        select: (files = [{}]) => select({target: {files}}),
+    return {context, readers, writes, run, input, changeFormat: value => changeFormat({target: {value}}),
+        select: (files = [{}]) => { input.files = files; input.value = files.length ? 'synthetic-selected-file' : ''; select({target: input}); },
         finish: (index, value) => readers[index].onload({target: {result: value}})};
 }
 
@@ -63,12 +64,14 @@ test('a new pending file cannot submit the previously loaded file', async () => 
 
 test('an older read failure must not unlock a newer pending read', async () => {
     const h = harness(); h.select(); h.select(); h.readers[0].onerror();
+    assert.equal(h.input.value, 'synthetic-selected-file');
     assert.equal(h.context.readingFile, true); await h.run(); assert.equal(h.writes.length, 0);
     h.finish(1, 'fixture=new'); await h.run(); assert.equal(h.writes[0].value, 'new');
 });
 
 for (const event of ['onerror', 'onabort']) test(`current ${event} clears stale content and permits a later selection`, async () => {
     const h = harness(); h.select(); h.finish(0, 'fixture=old'); h.select(); h.readers[1][event]();
+    assert.equal(h.input.value, '');
     assert.equal(h.context.readingFile, false); assert.equal(h.context.contentImport, '');
     assert.equal(h.context.settingStore.alert.type, 'error'); await h.run(); assert.equal(h.writes.length, 0);
     h.select(); h.finish(2, 'fixture=retry'); await h.run(); assert.equal(h.writes[0].value, 'retry');
@@ -76,6 +79,7 @@ for (const event of ['onerror', 'onabort']) test(`current ${event} clears stale 
 
 test('a synchronous FileReader rejection releases the read gate without writing', async () => {
     const h = harness({throwOnRead: true}); h.select();
+    assert.equal(h.input.value, '');
     assert.equal(h.context.readingFile, false); assert.equal(h.context.settingStore.alert.type, 'error');
     await h.run(); assert.equal(h.writes.length, 0);
 });

@@ -66,7 +66,8 @@ const ImportCookie = ({tab}) => {
     };
 
     const handleFileChange = (e) => {
-        const file = e.target.files[0];
+        const input = e.target;
+        const file = input.files[0];
         const version = ++fileReadVersion.current;
         // A new selection invalidates the old content before its asynchronous read starts.
         setContentImport("");
@@ -93,6 +94,8 @@ const ImportCookie = ({tab}) => {
         reader.onerror = reader.onabort = () => {
             if (isCurrentRead()) {
                 finishRead();
+                // Clear synchronously so a later selection cannot be reset by a queued render.
+                input.value = "";
                 settingStore.alert = {type: "error", message: extension.getLang("alert_import_cookie_error")};
             }
         };

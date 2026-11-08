@@ -583,3 +583,96 @@ it("retains the independent text draft while discarding a file on format change"
     await waitFor(() => expect(settingStore.popup).toBe(""));
     expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "text-draft"}));
 });
+
+function nativeResettableFileInput() {
+    const input = document.querySelector('input[type="file"]');
+    const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    // user-event 13 installs an own `files` property instead of a native FileList.
+    // Restore the browser's empty-value-clears-files contract for that test double.
+    Object.defineProperty(input, "value", {
+        configurable: true,
+        get() { return nativeValue.get.call(this); },
+        set(value) {
+            nativeValue.set.call(this, value);
+            if (value === "") delete this.files;
+        },
+    });
+    return input;
+}
+
+it.each(["onerror", "onabort", "throw"])("can select the same file again after a read %s", async failure => {
+    const readers = [];
+    vi.stubGlobal("FileReader", class {
+        constructor() { readers.push(this); }
+        readAsText() {
+            if (failure === "throw" && this === readers[0]) throw new Error("Synthetic read failure");
+        }
+    });
+    await openImport();
+    fireEvent.click(screen.getByLabelText("Use a file"));
+    const input = nativeResettableFileInput();
+    const file = new File(["fixture=retry"], "retry-fixture.txt");
+    act(() => userEvent.upload(input, file));
+    expect(readers).toHaveLength(1);
+    if (failure !== "throw") act(() => readers[0][failure]());
+    expect(screen.getByText("btn_import")).toBeDisabled();
+    expect(settingStore.alert.type).toBe("error");
+    expect(input.files).toHaveLength(0);
+    // userEvent preserves native same-selection behavior: the identical file
+    // does not emit a second change unless the failed selection was cleared.
+    act(() => userEvent.upload(input, file));
+    expect(readers).toHaveLength(2);
+    act(() => readers[1].onload({target: {result: "fixture=retry"}}));
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "retry"}));
+});
+
+it("keeps the newer native file selection when an older read fails", async () => {
+    const h = await openFileImport();
+    const input = nativeResettableFileInput();
+    const oldFile = new File(["fixture=old"], "old-fixture.txt");
+    const newFile = new File(["fixture=new"], "new-fixture.txt");
+    act(() => userEvent.upload(input, oldFile));
+    act(() => userEvent.upload(input, newFile));
+    act(() => h.readers[0].onerror());
+    expect(document.querySelector('input[type="file"]')).toBe(input);
+    expect(input.files[0]).toBe(newFile);
+    h.finish(1, "fixture=new");
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new"}));
+});
+
+it("preserves a successful file selection when choosing the same file again", async () => {
+    const h = await openFileImport();
+    const input = nativeResettableFileInput();
+    const file = new File(["fixture=selected"], "selected-fixture.txt");
+    act(() => userEvent.upload(input, file));
+    h.finish(0, "fixture=selected");
+    act(() => userEvent.upload(input, file));
+    expect(h.readers).toHaveLength(1);
+    expect(document.querySelector('input[type="file"]')).toBe(input);
+    expect(input.files[0]).toBe(file);
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "selected"}));
+});
+
+it("retains a replacement file when failure and selection share a render batch", async () => {
+    const h = await openFileImport();
+    const input = nativeResettableFileInput();
+    const oldFile = new File(["fixture=old"], "old-fixture.txt");
+    const newFile = new File(["fixture=new"], "new-fixture.txt");
+    act(() => userEvent.upload(input, oldFile));
+    act(() => {
+        h.readers[0].onerror();
+        userEvent.upload(input, newFile);
+    });
+    expect(document.querySelector('input[type="file"]')).toBe(input);
+    expect(input.files[0]).toBe(newFile);
+    h.finish(1, "fixture=new");
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({value: "new"}));
+});
