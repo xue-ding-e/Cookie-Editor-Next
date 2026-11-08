@@ -8,6 +8,7 @@ import {settingStore} from "../../../../../mobx/setting.store";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {observer} from "mobx-react-lite";
 import {shouldIncludeDomain} from "../../../../../utils/cookie_import";
+import {canSetCookieWithoutRemoval} from "../../../../../utils/cookie_edit";
 
 const EditCookie = ({cookie, tab}) => {
     const ref = useRef(null);
@@ -82,15 +83,17 @@ const EditCookie = ({cookie, tab}) => {
             value: selection.value,
         }
         const dataRemove = {url, name: cookie.name, storeId: cookie.storeId};
+        const setWithoutRemoval = canSetCookieWithoutRemoval(cookie, selection, dataUpdate);
         const isCurrentEditor = () => mounted.current && currentCookie.current === cookie &&
             editorSession.current === session && settingStore.cookie_select === selection &&
             settingStore.popup === "edit_cookie";
         saveInProgress.current = true;
         setSaving(true);
         try {
-            // These browser calls are not atomic; a set failure does not roll back the removal.
+            // Avoid pre-deletion when the exposed identity and outgoing scope are unchanged.
+            // Other edits remain non-atomic: a set failure does not roll back their removal.
             // Once started, finish using only the captured data, even if this editor is closed.
-            await chrome.cookies.remove(dataRemove);
+            if (!setWithoutRemoval) await chrome.cookies.remove(dataRemove);
             await chrome.cookies.set(dataUpdate);
             if (isCurrentEditor()) {
                 document.dispatchEvent(new CustomEvent("update_cookie", {

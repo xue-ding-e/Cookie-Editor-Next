@@ -222,6 +222,7 @@ it("does not let A's pending actual edit write B's data, refresh B, or close B's
     chromeMock.cookies.remove.mockReturnValueOnce(removal.promise);
     const valueA = await openEdit();
     fireEvent.change(valueA, {target: {value: "submitted-a"}});
+    fireEvent.change(screen.getByLabelText("Path"), {target: {value: "/changed-fixture"}});
     fireEvent.click(screen.getByText("Edit"));
     await waitFor(() => expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1));
 
@@ -237,7 +238,7 @@ it("does not let A's pending actual edit write B's data, refresh B, or close B's
     await act(async () => removal.resolve({}));
 
     expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-        url: "https://example.invalid/", name: fixture.name, domain: "example.invalid", value: "submitted-a", storeId: "0",
+        url: "https://example.invalid/", name: fixture.name, domain: "example.invalid", path: "/changed-fixture", value: "submitted-a", storeId: "0",
     }));
     expect(settingStore.popup).toBe("edit_cookie");
     expect(settingStore.alert.message).toBe("editor-b-fixture");
@@ -268,12 +269,15 @@ it.each(["remove", "set"])("keeps the actual edit draft after %s rejection, unlo
     chromeMock.cookies[phase].mockRejectedValueOnce(new Error("Synthetic API failure"));
     const value = await openEdit();
     fireEvent.change(value, {target: {value: "retry-fixture"}});
+    // Retain remove-success then set-failure coverage as well as the direct-set cases below.
+    fireEvent.change(screen.getByLabelText("Path"), {target: {value: "/changed-fixture"}});
     fireEvent.click(screen.getByText("Edit"));
     await waitFor(() => expect(settingStore.alert.type).toBe("error"));
     expect(settingStore.popup).toBe("edit_cookie");
     expect(value).toHaveValue("retry-fixture");
     expect(value).not.toBeDisabled();
     expect(screen.getByText("Edit")).not.toBeDisabled();
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
     expect(chromeMock.cookies.set).toHaveBeenCalledTimes(phase === "remove" ? 0 : 1);
     expect(googleAnalytics).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Edit"));
@@ -806,7 +810,7 @@ it.each([
         fireEvent.change(screen.getByLabelText("Expiration Date"), {target: {value: "2030-02-03T04:05:06Z"}});
         fireEvent.click(screen.getByText("Edit"));
         await waitFor(() => expect(settingStore.popup).toBe(""));
-        expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+        expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
         expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({expirationDate: 1896321906, value: "unsaved-expiry-fixture"}));
     }
 });
@@ -819,6 +823,77 @@ it.each([["session", undefined], ["persistent", 1893456000]])("continues to save
     fireEvent.change(screen.getByLabelText("Value"), {target: {value: "valid-expiry-fixture"}});
     fireEvent.click(screen.getByText("Edit"));
     await waitFor(() => expect(settingStore.popup).toBe(""));
-    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
     expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({expirationDate, value: "valid-expiry-fixture"}));
+});
+
+it("direct-set: does not pre-delete an unchanged Cookie when its replacement is rejected", async () => {
+    chromeMock.cookies.set.mockRejectedValueOnce(new Error("Synthetic replacement rejected"));
+    const value = await openEdit();
+    fireEvent.change(value, {target: {value: "replacement-fixture"}});
+    fireEvent.click(screen.getByText("Edit"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name: fixture.name, value: "replacement-fixture", path: "/", storeId: "0"}));
+    expect(settingStore.popup).toBe("edit_cookie");
+    expect(value).toHaveValue("replacement-fixture");
+    expect(screen.getByText("Edit")).not.toBeDisabled();
+    expect(googleAnalytics).not.toHaveBeenCalled();
+});
+
+it("direct-set: targets the original explicit path without name-only removal among same-name Cookies", async () => {
+    chromeMock.tabs.query.mockResolvedValue([{id: 1, url: "https://example.invalid/account/view"}]);
+    chromeMock.cookies.getAll.mockResolvedValue([
+        {...fixture, hostOnly: true, path: "/"},
+        {...fixture, hostOnly: true, path: "/account"},
+    ]);
+    render(<ShowCookie />);
+    await screen.findByPlaceholderText("placeholder_search");
+    fireEvent.click(screen.getAllByTestId("edit-cookie-control")[0]);
+    fireEvent.change(screen.getByLabelText("Value"), {target: {value: "root-path-fixture"}});
+    fireEvent.click(screen.getByText("Edit"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name: fixture.name, value: "root-path-fixture", path: "/", url: "https://example.invalid/account/view", storeId: "0"}));
+    expect(chromeMock.cookies.set.mock.calls[0][0]).not.toHaveProperty("domain");
+});
+
+it("direct-set: still locks repeated clicks and the draft while a replacement is pending", async () => {
+    const write = deferred();
+    chromeMock.cookies.set.mockReturnValueOnce(write.promise);
+    const value = await openEdit();
+    fireEvent.change(value, {target: {value: "pending-replacement-fixture"}});
+    const save = screen.getByText("Edit");
+    act(() => { fireEvent.click(save); fireEvent.click(save); });
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(save).toBeDisabled();
+    expect(value).toBeDisabled();
+    await act(async () => write.resolve({}));
+    expect(settingStore.popup).toBe("");
+    expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1);
+});
+
+it("direct-set: preserves explicit domain scope when editing from a subdomain", async () => {
+    chromeMock.tabs.query.mockResolvedValue([{id: 1, url: "https://sub.example.invalid/account"}]);
+    chromeMock.cookies.getAll.mockResolvedValue([{...fixture, domain: ".example.invalid", hostOnly: false, storeId: "fixture-store-domain"}]);
+    const value = await openEdit();
+    fireEvent.change(value, {target: {value: "domain-replacement-fixture"}});
+    fireEvent.click(screen.getByText("Edit"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({domain: ".example.invalid", path: "/", storeId: "fixture-store-domain", url: "https://sub.example.invalid/account"}));
+});
+
+it("direct-set: leaves prefix security enforcement to set without pre-deletion or silent flag repair", async () => {
+    chromeMock.cookies.getAll.mockResolvedValue([{...fixture, name: "__Host-fixture", hostOnly: true, secure: true}]);
+    chromeMock.cookies.set.mockRejectedValueOnce(new Error("Synthetic prefix policy rejection"));
+    await openEdit();
+    fireEvent.change(screen.getByLabelText("Secure"), {target: {value: "false"}});
+    fireEvent.click(screen.getByText("Edit"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name: "__Host-fixture", secure: false, path: "/"}));
+    expect(chromeMock.cookies.set.mock.calls[0][0]).not.toHaveProperty("domain");
+    expect(settingStore.popup).toBe("edit_cookie");
 });

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {shouldIncludeDomain} from "../src/utils/cookie_import.js";
+import {canSetCookieWithoutRemoval} from "../src/utils/cookie_edit.js";
 
 // Execute the actual editor handlers with hook doubles and synthetic browser boundaries.
 // No extension, browser profile, real Cookies, analytics or network client is loaded.
@@ -27,7 +28,7 @@ function createHarness({query, remove, set, tab = tabA} = {}) {
     let refIndex, stateIndex, effectIndex;
     const refs = [], states = [], effects = [];
     const context = {
-        settingStore: store, shouldIncludeDomain, extension: {getLang: key => key},
+        settingStore: store, shouldIncludeDomain, canSetCookieWithoutRemoval, extension: {getLang: key => key},
         chrome: {
             tabs: {query: async details => { calls.query.push(details); return query ? query() : [tab]; }},
             cookies: {
@@ -65,6 +66,7 @@ function createHarness({query, remove, set, tab = tabA} = {}) {
 test("save snapshots A before any await and cannot write B or close B's editor", async () => {
     const query = deferred(), removal = deferred();
     const h = createHarness({query: () => query.promise, remove: () => removal.promise});
+    h.edit("path", "/changed-fixture");
     h.edit("value", "submitted-a");
     const pending = h.save();
     h.select({...fixture("fixture-b"), value: "private-b-fixture", domain: "second.invalid", storeId: "fixture-store-b"});
@@ -85,13 +87,14 @@ test("save stays bound to the displayed tab, not a newly active tab", async () =
     const h = createHarness({query: async () => [{id: 2, url: "https://second.invalid/"}]});
     await h.save();
     assert.equal(h.calls.query.length, 0);
-    assert.equal(h.calls.remove[0].url, tabA.url);
+    assert.equal(h.calls.remove.length, 0);
     assert.equal(h.calls.set[0].url, tabA.url);
 });
 
 test("a second click while removal is pending cannot start another save", async () => {
     const removal = deferred();
     const h = createHarness({remove: () => removal.promise});
+    h.edit("path", "/changed-fixture");
     const first = h.save(), second = h.save();
     await flush();
     assert.equal(h.calls.remove.length, 1);
@@ -104,6 +107,7 @@ test("a second click while removal is pending cannot start another save", async 
 test("the actual edit handler cannot change the submitted draft while saving", async () => {
     const removal = deferred();
     const h = createHarness({remove: () => removal.promise});
+    h.edit("path", "/changed-fixture");
     const pending = h.save();
     h.edit("value", "ignored-later-edit");
     assert.equal(h.store.cookie_select.value, "synthetic-a");
@@ -145,6 +149,7 @@ test("cancel followed by reopening the same Cookie isolates the old completion",
 test("cancel during removal still completes the captured write without claiming cancellation", async () => {
     const removal = deferred();
     const h = createHarness({remove: () => removal.promise});
+    h.edit("path", "/changed-fixture");
     const pending = h.save();
     assert.equal(h.calls.remove.length, 1);
     h.close();
@@ -162,9 +167,12 @@ for (const phase of ["remove", "set"]) {
     test(`${phase} rejection reports an error only to the live editor and allows retry`, async () => {
         let reject = true;
         const h = createHarness({[phase]: async () => { if (reject) throw new Error("Synthetic API failure"); }});
+        // Keep both failure phases covered on the identity-changing removal route.
+        h.edit("path", "/changed-fixture");
         await h.save();
         assert.equal(h.store.popup, "edit_cookie");
         assert.equal(h.store.alert.type, "error");
+        assert.equal(h.calls.remove.length, 1);
         assert.equal(h.calls.set.length, phase === "remove" ? 0 : 1);
         assert.deepEqual(h.calls.events, []);
         assert.deepEqual(h.calls.analytics, []);
@@ -219,7 +227,8 @@ test("a finite zero expiration remains an explicit supported value", async () =>
     const h = createHarness();
     h.store.cookie_select.expirationDate = 0;
     await h.save();
-    assert.equal(h.calls.remove.length, 1);
+    // A deliberately expired set may still delete; skipping remove is not a no-deletion guarantee.
+    assert.equal(h.calls.remove.length, 0);
     assert.equal(h.calls.set.length, 1);
     assert.equal(h.calls.set[0].expirationDate, 0);
     assert.equal(h.store.alert.type, "info");
