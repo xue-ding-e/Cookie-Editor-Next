@@ -1,4 +1,5 @@
 import React from "react";
+import CryptoJS from "crypto-js";
 import {act, cleanup, fireEvent, render, screen, waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
@@ -712,4 +713,68 @@ it("omits the domain when an existing domain Cookie is renamed with the __Host- 
     expect(chromeMock.cookies.set.mock.calls[0][0]).toMatchObject({name: "__Host-renamed-fixture", path: "/", secure: true, storeId: "0"});
     expect(chromeMock.cookies.set.mock.calls[0][0]).not.toHaveProperty("domain");
     await waitFor(() => expect(settingStore.popup).toBe(""));
+});
+
+it.each(["", " \t\n", "[]", "# Netscape HTTP Cookie File\n# synthetic comment\n"])("keeps zero-entry text import %j open without claiming success", async value => {
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value}});
+    act(() => runInAction(() => { settingStore.option_import = ["reload_page"]; }));
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(draft).toHaveValue(value);
+    expect(screen.getByText("btn_import")).not.toBeDisabled();
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    expect(chromeMock.tabs.reload).not.toHaveBeenCalled();
+    expect(googleAnalytics).not.toHaveBeenCalled();
+});
+
+it("retains an encrypted empty list and its password instead of reporting an import", async () => {
+    const password = "synthetic-empty-list-password";
+    const encrypted = CryptoJS.AES.encrypt("[]", password).toString();
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: encrypted}});
+    const passwordInput = screen.getByPlaceholderText("label_password_decrypt");
+    fireEvent.change(passwordInput, {target: {value: password}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(draft).toHaveValue(encrypted);
+    expect(passwordInput).toHaveValue(password);
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    expect(googleAnalytics).not.toHaveBeenCalled();
+});
+
+it("keeps a comment-only file open instead of reporting a successful import", async () => {
+    const h = await openFileImport();
+    h.select("comment-only");
+    h.finish(0, "# Netscape HTTP Cookie File\n# synthetic comment\n");
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(settingStore.popup).toBe("import_cookie");
+    expect(document.querySelector('input[type="file"]').files).toHaveLength(1);
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    expect(googleAnalytics).not.toHaveBeenCalled();
+});
+
+it("still imports a valid Cookie whose value is empty", async () => {
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: "fixture="}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name: "fixture", value: ""}));
+    expect(settingStore.alert.type).toBe("info");
+});
+
+it("still decrypts and imports an encrypted nonempty Cookie list", async () => {
+    const password = "synthetic-valid-list-password";
+    const plaintext = JSON.stringify([{name: "fixture", value: "synthetic-encrypted", path: "/"}]);
+    const encrypted = CryptoJS.AES.encrypt(plaintext, password).toString();
+    const draft = await openImport();
+    fireEvent.change(draft, {target: {value: encrypted}});
+    fireEvent.change(screen.getByPlaceholderText("label_password_decrypt"), {target: {value: password}});
+    fireEvent.click(screen.getByText("btn_import"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name: "fixture", value: "synthetic-encrypted"}));
+    expect(settingStore.alert.type).toBe("info");
 });

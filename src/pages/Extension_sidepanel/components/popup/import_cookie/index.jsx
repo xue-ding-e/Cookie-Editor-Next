@@ -143,6 +143,8 @@ const ImportCookie = ({tab}) => {
             // can still interrupt writes: chrome.cookies does not provide transactions.
             const expirationDate = Math.round(Date.now() / 1000) + 365 * 86400;
             const cookiesToSet = parseCookieImport(dataCookies, url, expirationDate);
+            // An empty result is not an import; keep the draft open for correction.
+            if (cookiesToSet.length === 0) throw new Error("No Cookies to import");
             for (const cookie of cookiesToSet) {
                 await chrome.cookies.set(cookie);
             }

@@ -61,3 +61,20 @@ test("actual handler writes both parsed header pairs and signals success", async
     assert.equal(result.store.alert.type, "info");
     assert.deepEqual(result.events, ["update_cookie"]);
 });
+
+for (const input of ["", " \t\n", "[]", "# Netscape HTTP Cookie File\n# synthetic comment\n"]) {
+    test(`actual handler rejects zero-entry import ${JSON.stringify(input)} without closing the draft`, async () => {
+        const result = await runImport(input);
+        assert.equal(result.written.length, 0);
+        assert.equal(result.store.popup, "import_cookie");
+        assert.equal(result.store.alert.type, "error");
+        assert.deepEqual(result.events, []);
+    });
+}
+
+test("actual handler preserves a valid empty Cookie value", async () => {
+    const result = await runImport("fixture=");
+    assert.equal(result.written.length, 1);
+    assert.equal(result.written[0].value, "");
+    assert.equal(result.store.alert.type, "info");
+});
