@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
+import {shouldIncludeDomain} from "../src/utils/cookie_import.js";
 
 // Execute the actual editor handlers with hook doubles and synthetic browser boundaries.
 // No extension, browser profile, real Cookies, analytics or network client is loaded.
@@ -10,7 +11,7 @@ const start = source.indexOf("const EditCookie = ");
 const end = source.indexOf("\n    return (", start);
 assert.ok(start >= 0 && end > start, "component handler boundaries must remain identifiable");
 
-const fixture = (name = "fixture-a") => ({name, value: "synthetic-a", domain: "example.invalid", path: "/", httpOnly: false, secure: true, sameSite: "lax", storeId: "fixture-store-a"});
+const fixture = (name = "fixture-a") => ({name, value: "synthetic-a", domain: "example.invalid", hostOnly: false, path: "/", httpOnly: false, secure: true, sameSite: "lax", storeId: "fixture-store-a"});
 const tabA = {id: 1, url: "https://example.invalid/"};
 const deferred = () => {
     let resolve, reject;
@@ -26,7 +27,7 @@ function createHarness({query, remove, set, tab = tabA} = {}) {
     let refIndex, stateIndex, effectIndex;
     const refs = [], states = [], effects = [];
     const context = {
-        settingStore: store, extension: {getLang: key => key},
+        settingStore: store, shouldIncludeDomain, extension: {getLang: key => key},
         chrome: {
             tabs: {query: async details => { calls.query.push(details); return query ? query() : [tab]; }},
             cookies: {

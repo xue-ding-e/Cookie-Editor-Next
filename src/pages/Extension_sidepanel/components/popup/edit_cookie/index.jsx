@@ -7,6 +7,7 @@ import {extension} from "../../../../../utils/chrome";
 import {settingStore} from "../../../../../mobx/setting.store";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {observer} from "mobx-react-lite";
+import {shouldIncludeDomain} from "../../../../../utils/cookie_import";
 
 const EditCookie = ({cookie, tab}) => {
     const ref = useRef(null);
@@ -64,7 +65,7 @@ const EditCookie = ({cookie, tab}) => {
         // Freeze the submitted draft and its original tab/profile before any browser API await.
         // The active tab and global selection may belong to a different editor on completion.
         const dataUpdate = {
-            domain: selection.domain,
+            ...(shouldIncludeDomain(selection) ? {domain: selection.domain} : {}),
             expirationDate: selection.expirationDate,
             httpOnly: selection.httpOnly,
             name: selection.name,

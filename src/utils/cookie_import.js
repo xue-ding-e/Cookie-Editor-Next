@@ -1,7 +1,7 @@
 const HOST_PREFIX = "__Host-";
 const SECURE_PREFIX = "__Secure-";
 
-const shouldIncludeDomain = (cookie) => {
+export const shouldIncludeDomain = (cookie) => {
     if (!cookie.domain || cookie.name?.startsWith(HOST_PREFIX)) {
         return false;
     }
