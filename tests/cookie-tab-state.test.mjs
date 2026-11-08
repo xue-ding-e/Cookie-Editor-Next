@@ -31,7 +31,7 @@ function createHarness({tabs = [{id: 1, url: "https://example.invalid/", title: 
         cookies: {getAll: async details => { calls.getAll.push(details); return getAll ? getAll(details) : []; }},
     };
     const context = {
-        chrome, icons: {chrome: "fixture-default-icon"},
+        chrome, URL, icons: {chrome: "fixture-default-icon"},
         fetch: async url => { calls.fetch.push(url); return fetch ? fetch(url) : {status: 404}; },
         document: {addEventListener: (name, fn) => { assert.equal(name, "update_cookie"); updateCookie.addListener(fn); }, removeEventListener: (name, fn) => updateCookie.removeListener(fn)},
         useState: initial => {
@@ -218,3 +218,40 @@ test("same-tab Cookie refresh rejection keeps the prior editor data and reports 
         assert.equal(h.calls.query.length, 1);
     } finally { h.unmount(); }
 });
+
+for (const [url, origin] of [
+    ["https://example.invalid/private-fixture?fixture_token=synthetic&size=999#fixture-fragment", "https://example.invalid"],
+    ["https://fixture-user:fixture-password@example.invalid:8443/private?fixture=synthetic", "https://example.invalid:8443"],
+    ["http://example.invalid/path?fixture=synthetic", "http://example.invalid"],
+    ["https://[2001:db8::1]:8443/path?fixture=synthetic#fragment", "https://[2001:db8::1]:8443"],
+]) {
+    test(`favicon request keeps only the origin for synthetic ${url}`, async () => {
+        const h = createHarness({tabs: [{id: 1, url}], fetch: async () => ({status: 200})});
+        try {
+            await h.flush();
+            assert.equal(h.calls.fetch.length, 1);
+            assert.equal(h.calls.fetch[0], `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(origin)}&size=32`);
+            const request = new URL(h.calls.fetch[0]);
+            assert.equal(request.origin, "https://t3.gstatic.com");
+            assert.deepEqual(request.searchParams.getAll("url"), [origin]);
+            assert.deepEqual(request.searchParams.getAll("size"), ["32"]);
+            assert.equal(request.hash, "");
+            assert.doesNotMatch(request.href, /private|fixture_token|fixture-user|fixture-password|synthetic|fragment/);
+            assert.equal(h.state.favicon, request.href);
+            assert.equal(h.calls.getAll[0].url, url);
+        } finally { h.unmount(); }
+    });
+}
+
+for (const url of ["https://[invalid", "https://chromewebstore.google.com/detail/fixture"]) {
+    test(`favicon skips synthetic ${url} without blocking the local Cookie lookup`, async () => {
+        const h = createHarness({tabs: [{id: 1, url}]});
+        try {
+            await h.flush();
+            assert.equal(h.calls.fetch.length, 0);
+            assert.equal(h.state.favicon, "fixture-default-icon");
+            assert.equal(h.calls.getAll[0].url, url);
+            assert.equal(h.state.loadError, false);
+        } finally { h.unmount(); }
+    });
+}

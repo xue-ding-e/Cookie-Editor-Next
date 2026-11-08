@@ -76,7 +76,14 @@ const ShowCookie = () => {
 
             const getFavicon = async () => {
                 if (tabCurrent.url.startsWith("https://chromewebstore.google.com/")) return;
-                const linkFavicon = `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${tabCurrent.url}&size=32`;
+                let origin;
+                try {
+                    // A favicon needs only the site origin, never page paths, queries or credentials.
+                    origin = new URL(tabCurrent.url).origin;
+                } catch {
+                    return;
+                }
+                const linkFavicon = `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(origin)}&size=32`;
                 let response;
                 try {
                     response = await fetch(linkFavicon);

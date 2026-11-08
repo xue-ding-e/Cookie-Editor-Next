@@ -145,4 +145,37 @@ describe("active-tab Cookie loading with synthetic APIs only", () => {
         expect(chromeMock.tabs.query).toHaveBeenCalledTimes(1);
         expect(screen.getByTestId("cookie-actions")).toBeInTheDocument();
     });
+
+    it.each([
+        ["https://example.invalid/private-fixture?fixture_token=synthetic&size=999#fixture-fragment", "https://example.invalid"],
+        ["https://fixture-user:fixture-password@example.invalid:8443/private?fixture=synthetic", "https://example.invalid:8443"],
+        ["http://example.invalid/path?fixture=synthetic", "http://example.invalid"],
+        ["https://[2001:db8::1]:8443/path?fixture=synthetic#fragment", "https://[2001:db8::1]:8443"],
+    ])("requests only the encoded favicon origin for synthetic URL %s", async (url, origin) => {
+        chromeMock.tabs.query.mockResolvedValue([{id: 1, url}]);
+        chromeMock.cookies.getAll.mockResolvedValue([{name: "synthetic-cookie", value: "fixture-only"}]);
+        fetchMock.mockResolvedValue({status: 200});
+        render(<ShowCookie />);
+        expect(await screen.findByText("synthetic-cookie")).toBeInTheDocument();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0][0]).toBe(`https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(origin)}&size=32`);
+        const request = new URL(fetchMock.mock.calls[0][0]);
+        expect(request.origin).toBe("https://t3.gstatic.com");
+        expect(request.searchParams.getAll("url")).toEqual([origin]);
+        expect(request.searchParams.getAll("size")).toEqual(["32"]);
+        expect(request.hash).toBe("");
+        expect(request.href).not.toMatch(/private|fixture_token|fixture-user|fixture-password|synthetic|fragment/);
+        expect(screen.getByRole("img")).toHaveAttribute("src", request.href);
+        // The local Cookie lookup still needs the full page URL for path matching.
+        expect(chromeMock.cookies.getAll).toHaveBeenCalledExactlyOnceWith({url});
+    });
+
+    it.each(["https://[invalid", "https://chromewebstore.google.com/detail/fixture"])("keeps the default favicon without a request for %s", async url => {
+        chromeMock.tabs.query.mockResolvedValue([{id: 1, url}]);
+        render(<ShowCookie />);
+        await screen.findByText("msg_no_cookies");
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(screen.getByRole("img")).toHaveAttribute("src", "fixture-default-icon");
+        expect(chromeMock.cookies.getAll).toHaveBeenCalledExactlyOnceWith({url});
+    });
 });
