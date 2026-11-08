@@ -155,7 +155,9 @@ const AddCookie = ({tab}) => {
                                         <input
                                             disabled={adding}
                                             type="datetime-local"
-                                            onChange={(e) => handleAddCookie("expirationDate", Math.round(new Date(e.target.value).getTime() / 1000))}
+                                            onChange={(e) => handleAddCookie("expirationDate", e.target.value
+                                                ? Math.round(new Date(e.target.value).getTime() / 1000)
+                                                : undefined)}
                                             id="expirationDate"
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2"
                                             value={handleFormatDate(cookie?.expirationDate)}

@@ -245,3 +245,45 @@ it("suppresses late completion if the same instance receives a different display
     expect(updateEvents).not.toHaveBeenCalled();
     expect(screen.getByText("Add")).not.toBeDisabled();
 });
+
+it("clears a selected expiry back to the new Cookie's session default", async () => {
+    openForm();
+    const expiry = screen.getByLabelText("Expiration Date");
+    fireEvent.change(expiry, {target: {value: "2030-02-03T04:05"}});
+    expect(expiry).toHaveValue("2030-02-03T04:05");
+    fireEvent.change(expiry, {target: {value: ""}});
+    expect(expiry).toHaveValue("");
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    expect(chromeMock.cookies.set.mock.calls[0][0].expirationDate).toBeUndefined();
+    expect(chromeMock.cookies.set.mock.calls[0][0]).toMatchObject({name: "fixture-cookie", value: "synthetic-value", url: tab.url});
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+});
+
+it("preserves a cleared expiry through a rejected write and an explicit retry", async () => {
+    chromeMock.cookies.set.mockRejectedValueOnce(new Error("Synthetic write failure"));
+    openForm();
+    const expiry = screen.getByLabelText("Expiration Date");
+    fireEvent.change(expiry, {target: {value: "2030-02-03T04:05"}});
+    fireEvent.change(expiry, {target: {value: ""}});
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(settingStore.popup).toBe("add_cookie");
+    expect(expiry).toHaveValue("");
+    expect(chromeMock.cookies.set.mock.calls[0][0].expirationDate).toBeUndefined();
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.set).toHaveBeenCalledTimes(2);
+    expect(chromeMock.cookies.set.mock.calls[1][0].expirationDate).toBeUndefined();
+    expect(chromeMock.cookies.set.mock.calls[1][0]).toEqual(chromeMock.cookies.set.mock.calls[0][0]);
+});
+
+it("still submits a selected nonempty expiry in Unix seconds", async () => {
+    openForm();
+    const localDate = "2030-02-03T04:05";
+    fireEvent.change(screen.getByLabelText("Expiration Date"), {target: {value: localDate}});
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => expect(chromeMock.cookies.set).toHaveBeenCalledTimes(1));
+    expect(chromeMock.cookies.set.mock.calls[0][0].expirationDate).toBe(new Date(localDate).getTime() / 1000);
+    expect(Number.isFinite(chromeMock.cookies.set.mock.calls[0][0].expirationDate)).toBe(true);
+});
