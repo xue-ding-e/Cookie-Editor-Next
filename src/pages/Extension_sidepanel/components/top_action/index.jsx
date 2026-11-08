@@ -139,7 +139,7 @@ const TopAction = ({cookies, tab}) => {
 
             <ShareCookie cookies={cookies}/>
 
-            <AddCookie />
+            <AddCookie tab={tab}/>
 
             <ImportCookie tab={tab}/>
 

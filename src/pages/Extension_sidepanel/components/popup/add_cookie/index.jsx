@@ -1,6 +1,6 @@
 /*global chrome*/
 import {motion} from "framer-motion";
-import {useRef, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {observer} from "mobx-react-lite";
 import {googleAnalytics} from "../../../../../utils/google_analytics";
 import {extension} from "../../../../../utils/chrome";
@@ -8,35 +8,76 @@ import {settingStore} from "../../../../../mobx/setting.store";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import ModalPopup from "../modal_popup";
 
-const AddCookie = () => {
+const AddCookie = ({tab}) => {
     const ref = useRef(null);
-    useClickOutside(ref, () => {
-        settingStore.popup = "";
-    })
-
+    const mounted = useRef(false);
+    const currentTab = useRef(tab);
+    const addSession = useRef(0);
+    const addInProgress = useRef(false);
+    const [adding, setAdding] = useState(false);
     const [cookie, setCookie] = useState({});
+    const popup = settingStore.popup;
+    currentTab.current = tab;
+
+    useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
+    }, []);
+    useEffect(() => {
+        if (popup !== "add_cookie") {
+            // Other toolbar actions can replace this dialog without using its Cancel button.
+            addSession.current++;
+            setCookie({});
+        }
+    }, [popup]);
+    const closeAdder = () => {
+        addSession.current++;
+        setCookie({});
+        settingStore.popup = "";
+    };
+    useClickOutside(ref, closeAdder);
 
     const handleAddCookie = (key, value) => {
-        setCookie({...cookie, ...{[key]: value}})
+        if (addInProgress.current) return;
+        setCookie(previous => ({...previous, [key]: value}));
     }
 
     const handleSetCookie = async () => {
-        try {
-            const [tabCurrent] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
-            await chrome.cookies.set({
-                ...cookie, ...{url: tabCurrent.url}
-            })
-            document.dispatchEvent(new CustomEvent("update_cookie", {
-                detail: {action: "add"},
-                bubbles: true,
-            }));
-            settingStore.alert = {type: "info", message: extension.getLang("alert_add_cookie_success")}
-            googleAnalytics({name: "add_cookie", params: []})
-        } catch (e) {
-            settingStore.alert = {type: "error", message: "Add cookie error"}
+        // Lock before any await so rapid repeated clicks cannot start another write.
+        if (addInProgress.current || settingStore.popup !== "add_cookie") return;
+        const url = tab?.url;
+        if (typeof url !== "string" || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
+            return;
         }
-
-        settingStore.popup = "";
+        // Use the displayed tab and submitted draft, never a later active-tab query.
+        const data = {...cookie, url};
+        const sourceTabId = tab?.id;
+        const session = addSession.current;
+        const isCurrentAdder = () => mounted.current && addSession.current === session &&
+            currentTab.current?.id === sourceTabId && currentTab.current?.url === url &&
+            settingStore.popup === "add_cookie";
+        addInProgress.current = true;
+        setAdding(true);
+        try {
+            await chrome.cookies.set(data);
+            // Closing does not cancel a started write; its result must not affect a newer dialog.
+            if (isCurrentAdder()) {
+                settingStore.alert = {type: "info", message: extension.getLang("alert_add_cookie_success")};
+                document.dispatchEvent(new CustomEvent("update_cookie", {
+                    detail: {action: "add"},
+                    bubbles: true,
+                }));
+                if (isCurrentAdder()) closeAdder();
+            }
+            googleAnalytics({name: "add_cookie", params: []})
+        } catch {
+            // Preserve the current draft for correction or an explicit retry.
+            if (isCurrentAdder()) settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
+        } finally {
+            addInProgress.current = false;
+            if (mounted.current) setAdding(false);
+        }
     }
 
     const handleFormatDate = (value) => {
@@ -84,10 +125,11 @@ const AddCookie = () => {
                                             Name
                                         </label>
                                         <input
+                                            disabled={adding}
                                             type="text"
                                             onChange={(e) => handleAddCookie("name", e.target.value)}
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2"
-                                            value={cookie?.name}
+                                            value={cookie?.name ?? ""}
                                         />
                                     </div>
                                     <div className={`w-full mb-2`}>
@@ -97,10 +139,11 @@ const AddCookie = () => {
                                             Value
                                         </label>
                                         <textarea
+                                            disabled={adding}
                                             rows={3}
+                                            value={cookie?.value ?? ""}
                                             onChange={(e) => handleAddCookie("value", e.target.value)}
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2">
-                                            {cookie?.value}
                                         </textarea>
                                     </div>
                                     <div className={`w-full mb-2`}>
@@ -110,6 +153,7 @@ const AddCookie = () => {
                                             Expiration Date
                                         </label>
                                         <input
+                                            disabled={adding}
                                             type="datetime-local"
                                             onChange={(e) => handleAddCookie("expirationDate", Math.round(new Date(e.target.value).getTime() / 1000))}
                                             id="expirationDate"
@@ -124,6 +168,7 @@ const AddCookie = () => {
                                             HttpOnly
                                         </label>
                                         <select
+                                            disabled={adding}
                                             id="add-cookie-httpOnly"
                                             onChange={(e) => handleAddCookie("httpOnly", e.target.value === "true")}
                                             value={String(cookie?.httpOnly ?? false)}
@@ -139,6 +184,7 @@ const AddCookie = () => {
                                             SameSite
                                         </label>
                                         <select
+                                            disabled={adding}
                                             onChange={(e) => handleAddCookie("sameSite", e.target.value)}
                                             value={String(cookie?.sameSite)}
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2">
@@ -155,6 +201,7 @@ const AddCookie = () => {
                                             Secure
                                         </label>
                                         <select
+                                            disabled={adding}
                                             onChange={(e) => handleAddCookie("secure", e.target.value === "true")}
                                             value={String(cookie?.secure)}
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2">
@@ -166,13 +213,14 @@ const AddCookie = () => {
                                         <div className={"inline-block w-[59%]"}>
                                             <button
                                                 onClick={handleSetCookie}
+                                                disabled={adding}
                                                 className={`h-[40px] w-full rounded-[10px] bg-blue-500 text-white px-5`}>
                                                 Add
                                             </button>
                                         </div>
                                         <div className={"inline-block w-[39%]"}>
                                             <button
-                                                onClick={() => settingStore.popup = ""}
+                                                onClick={closeAdder}
                                                 className={`h-[40px] w-full rounded-[10px] bg-gray-200 text-gray-900 px-5`}>
                                                 Cancel
                                             </button>
