@@ -119,13 +119,14 @@ const AddCookie = () => {
                                     </div>
                                     <div className={`w-full mb-2`}>
                                         <label
-                                            htmlFor="hostOnly"
+                                            htmlFor="add-cookie-httpOnly"
                                             className="block mb-2 text-[12px] font-medium text-gray-900">
                                             HttpOnly
                                         </label>
                                         <select
-                                            onChange={(e) => handleAddCookie("hostOnly", e.target.value  === "true")}
-                                            value={String(cookie?.hostOnly)}
+                                            id="add-cookie-httpOnly"
+                                            onChange={(e) => handleAddCookie("httpOnly", e.target.value === "true")}
+                                            value={String(cookie?.httpOnly ?? false)}
                                             className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg block w-full p-2">
                                             <option value={"true"}>True</option>
                                             <option value={"false"}>False</option>
