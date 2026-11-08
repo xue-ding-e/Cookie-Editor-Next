@@ -778,3 +778,47 @@ it("still decrypts and imports an encrypted nonempty Cookie list", async () => {
     expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({name: "fixture", value: "synthetic-encrypted"}));
     expect(settingStore.alert.type).toBe("info");
 });
+
+it.each([
+    ["invalid persistent date", false, "not a date"],
+    ["cleared persistent date", false, ""],
+    ["invalid session-date draft", true, "2030-02-03T04:05:06Z"],
+])("does not remove or write a Cookie for %s", async (_kind, session, input) => {
+    chromeMock.cookies.getAll.mockResolvedValue([{...fixture, session, expirationDate: session ? undefined : 1893456000}]);
+    render(<ShowCookie />);
+    await screen.findByPlaceholderText("placeholder_search");
+    fireEvent.click(screen.getByTestId("edit-cookie-control"));
+    fireEvent.change(screen.getByLabelText("Value"), {target: {value: "unsaved-expiry-fixture"}});
+    fireEvent.change(screen.getByLabelText("Expiration Date"), {target: {value: input}});
+    expect(Number.isFinite(settingStore.cookie_select.expirationDate)).toBe(false);
+    fireEvent.click(screen.getByText("Edit"));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    await waitFor(() => expect(settingStore.alert.type).toBe("error"));
+    expect(googleAnalytics).not.toHaveBeenCalled();
+    expect(settingStore.popup).toBe("edit_cookie");
+    expect(screen.getByLabelText("Value")).toHaveValue("unsaved-expiry-fixture");
+    expect(screen.getByText("Edit")).not.toBeDisabled();
+    if (session) {
+        fireEvent.click(screen.getByText("Cancel"));
+        expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    } else {
+        fireEvent.change(screen.getByLabelText("Expiration Date"), {target: {value: "2030-02-03T04:05:06Z"}});
+        fireEvent.click(screen.getByText("Edit"));
+        await waitFor(() => expect(settingStore.popup).toBe(""));
+        expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+        expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({expirationDate: 1896321906, value: "unsaved-expiry-fixture"}));
+    }
+});
+
+it.each([["session", undefined], ["persistent", 1893456000]])("continues to save a valid %s Cookie expiration", async (_kind, expirationDate) => {
+    chromeMock.cookies.getAll.mockResolvedValue([{...fixture, session: expirationDate === undefined, expirationDate}]);
+    render(<ShowCookie />);
+    await screen.findByPlaceholderText("placeholder_search");
+    fireEvent.click(screen.getByTestId("edit-cookie-control"));
+    fireEvent.change(screen.getByLabelText("Value"), {target: {value: "valid-expiry-fixture"}});
+    fireEvent.click(screen.getByText("Edit"));
+    await waitFor(() => expect(settingStore.popup).toBe(""));
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+    expect(chromeMock.cookies.set).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({expirationDate, value: "valid-expiry-fixture"}));
+});

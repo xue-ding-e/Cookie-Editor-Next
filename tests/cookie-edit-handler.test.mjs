@@ -192,3 +192,35 @@ test("an unavailable source tab causes zero writes and an actionable error", asy
     assert.equal(h.store.alert.type, "error");
     assert.equal(h.store.popup, "edit_cookie");
 });
+
+for (const input of ["not a date", ""]) test(`an invalid expiration draft ${JSON.stringify(input)} causes zero mutations`, async () => {
+    const h = createHarness();
+    h.edit("expirationDate", input);
+    assert.equal(Number.isNaN(h.store.cookie_select.expirationDate), true);
+    await h.save();
+    assert.deepEqual(h.calls.remove, []);
+    assert.deepEqual(h.calls.set, []);
+    assert.deepEqual(h.calls.events, []);
+    assert.deepEqual(h.calls.analytics, []);
+    assert.equal(h.store.alert.type, "error");
+    assert.equal(h.store.popup, "edit_cookie");
+});
+
+test("a non-finite expiration cannot remove the original Cookie", async () => {
+    const h = createHarness();
+    h.store.cookie_select.expirationDate = Infinity;
+    await h.save();
+    assert.deepEqual(h.calls.remove, []);
+    assert.deepEqual(h.calls.set, []);
+    assert.equal(h.store.alert.type, "error");
+});
+
+test("a finite zero expiration remains an explicit supported value", async () => {
+    const h = createHarness();
+    h.store.cookie_select.expirationDate = 0;
+    await h.save();
+    assert.equal(h.calls.remove.length, 1);
+    assert.equal(h.calls.set.length, 1);
+    assert.equal(h.calls.set[0].expirationDate, 0);
+    assert.equal(h.store.alert.type, "info");
+});

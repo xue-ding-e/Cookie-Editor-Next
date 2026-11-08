@@ -62,6 +62,11 @@ const EditCookie = ({cookie, tab}) => {
             settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
             return;
         }
+        // Validate before removal: an invalid date draft must not delete the original Cookie.
+        if (selection.expirationDate !== undefined && !Number.isFinite(selection.expirationDate)) {
+            settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
+            return;
+        }
         // Freeze the submitted draft and its original tab/profile before any browser API await.
         // The active tab and global selection may belong to a different editor on completion.
         const dataUpdate = {
