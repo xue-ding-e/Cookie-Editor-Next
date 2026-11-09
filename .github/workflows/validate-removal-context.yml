@@ -1,0 +1,85 @@
+name: Validate Cookie removal context
+on:
+  push:
+    branches: [ci/validate-cookie-removal-context-20261109]
+permissions:
+  contents: read
+concurrency:
+  group: cookie-removal-context-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'xue-ding-e/Cookie-Editor-Next' && github.ref == 'refs/heads/ci/validate-cookie-removal-context-20261109'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_SHA: 9e16ffa9f3e2f1a977e9ee9c77554b029b801807
+      BASE_SHA: eb433ddc170d26deb6d3c7e15a2e16b8118eaa91
+      VITE_WEBSITE: https://cookieeditor.org
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 3
+          persist-credentials: false
+      - name: Verify the exact source and validation-only commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^^)" = "$BASE_SHA"
+          test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 2
+          test "$(git rev-list --parents -n 1 "$SOURCE_SHA" | wc -w)" -eq 2
+          test "$(git diff --name-only "$SOURCE_SHA" HEAD)" = ".github/workflows/validate-removal-context.yml"
+          test "$(git diff --name-status "$SOURCE_SHA" HEAD)" = $'A\t.github/workflows/validate-removal-context.yml'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install locked dependencies without lifecycle scripts
+        run: timeout 300s npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test actual React components with synthetic browser boundaries
+        run: |
+          timeout 180s npm test -- --reporter=json --outputFile=/tmp/cookie-vitest.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/cookie-vitest.json"))
+          assert report["success"]
+          assert report["numTotalTests"] == report["numPassedTests"] == 161
+          assert report["numFailedTests"] == report["numPendingTests"] == 0
+          PY
+      - name: Check local date handling in a non-UTC timezone
+        run: |
+          timeout 60s env TZ=America/New_York npm test -- --run src/pages/Extension_sidepanel/tabs/cookie-dialog-state.test.jsx -t 'expiry input:|valid .* Cookie expiration|non-finite expiration' --reporter=json --outputFile=/tmp/cookie-date-newyork.json
+          python3 - <<'PYDATE'
+          import json
+          report = json.load(open("/tmp/cookie-date-newyork.json"))
+          assert report["success"] and report["numFailedTests"] == 0
+          assert report["numPassedTests"] == 16 and report["numPendingTests"] == 56
+          PYDATE
+      - name: Test all Node handlers and parsers
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 120s node --test --test-reporter=tap tests/*.test.mjs | tee /tmp/cookie-node.tap
+          python3 - <<'PY'
+          import re
+          output = open("/tmp/cookie-node.tap").read()
+          for key, count in [("tests", 140), ("pass", 140), ("fail", 0), ("cancelled", 0), ("skipped", 0), ("todo", 0)]:
+              assert re.search(r"^# " + key + r" " + str(count) + r"$", output, re.M), (key, count)
+          PY
+      - name: Test packaging without publishing
+        run: |
+          timeout 60s python3 -B - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover("tests", pattern="test_package_extension.py")
+          assert suite.countTestCases() == 8
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          assert result.wasSuccessful() and result.testsRun == 8 and not result.skipped
+          PY
+      - name: Compile extension without installation or browser access
+        run: timeout 180s npm run build
+      - name: Ensure validation did not modify tracked source
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+
