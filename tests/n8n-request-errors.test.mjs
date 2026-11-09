@@ -89,12 +89,12 @@ test("n8n keeps empty URL and empty result errors observable", async () => {
     }
 });
 
-test("n8n records invalid URL failure even when the synthetic socket is closed", async () => {
+test("n8n ignores an inactive connection's invalid URL request", async () => {
     const h = harness({open: false});
     await assert.doesNotReject(h.send({type: "get_cookies", request_id: "fixture", url: "https://["}));
     assert.equal(h.sent.length, 0);
     assert.equal(h.queries.length, 0);
-    assert.equal(h.storage.n8n_history[0].status, "error");
+    assert.equal(h.storage.n8n_history.length, 0);
 });
 
 test("n8n ignores malformed JSON without querying Cookies", async () => {

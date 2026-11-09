@@ -18,6 +18,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const CONNECT_TIMEOUT_MS = 15000;
 
 let socket = null;
+let connectionGeneration = 0;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let pendingConnectResolve = null;
@@ -47,6 +48,9 @@ const storageRemove = (keys) => {
 
 const isSocketOpen = () => socket && socket.readyState === WebSocket.OPEN;
 
+const isCurrentSocket = (sourceSocket, generation) => sourceSocket && socket === sourceSocket &&
+    connectionGeneration === generation && sourceSocket.readyState === WebSocket.OPEN;
+
 const broadcastUpdate = (data) => {
     chrome.runtime.sendMessage({action: "n8n_status_changed", data}).catch(() => {});
     if (data?.history) {
@@ -75,9 +79,12 @@ const getStatus = async () => {
     };
 };
 
-const addHistoryEntry = async (entry) => {
+const addHistoryEntry = async (entry, isCurrent = () => true) => {
+    if (!isCurrent()) return;
     const data = await storageGet([STORAGE_KEYS.history]);
+    if (!isCurrent()) return;
     const history = [entry, ...(data[STORAGE_KEYS.history] || [])].slice(0, MAX_HISTORY);
+    // A storage write that already started cannot be rolled back by disconnection.
     await storageSet({[STORAGE_KEYS.history]: history});
     return history;
 };
@@ -119,6 +126,7 @@ const rejectPendingConnect = (error) => {
 };
 
 const closeSocket = () => {
+    connectionGeneration += 1;
     if (!socket) return;
 
     socket.onopen = null;
@@ -171,7 +179,9 @@ const sendPing = () => {
     }
 };
 
-const handleGetCookies = async (payload) => {
+const handleGetCookies = async (payload, sourceSocket, generation) => {
+    const isCurrent = () => isCurrentSocket(sourceSocket, generation);
+    if (!isCurrent()) return;
     const requestId = payload.request_id || payload.requestId;
     let url = "";
     let domain = "";
@@ -184,6 +194,7 @@ const handleGetCookies = async (payload) => {
         url = normalizeUrl(payload.url);
         domain = payload.domain || (url ? new URL(url).hostname : "");
         const stored = await storageGet([STORAGE_KEYS.password]);
+        if (!isCurrent()) return;
         const password = stored[STORAGE_KEYS.password];
 
         if (!password) {
@@ -195,6 +206,7 @@ const handleGetCookies = async (payload) => {
         }
 
         const cookies = await chrome.cookies.getAll({url});
+        if (!isCurrent()) return;
 
         if (cookies.length === 0) {
             throw new Error("No cookies found for this url");
@@ -203,8 +215,8 @@ const handleGetCookies = async (payload) => {
         cookieCount = cookies.length;
         const encryptedData = encryptCookies(cookies, password);
 
-        if (isSocketOpen()) {
-            socket.send(JSON.stringify({
+        if (isCurrent()) {
+            sourceSocket.send(JSON.stringify({
                 type: "cookies_result",
                 request_id: requestId,
                 data: encryptedData,
@@ -213,11 +225,12 @@ const handleGetCookies = async (payload) => {
             }));
         }
     } catch (error) {
+        if (!isCurrent()) return;
         status = "error";
         message = error.message || "Failed to fetch cookies";
 
-        if (isSocketOpen()) {
-            socket.send(JSON.stringify({
+        if (isCurrent()) {
+            sourceSocket.send(JSON.stringify({
                 type: "cookies_error",
                 request_id: requestId,
                 message,
@@ -227,6 +240,7 @@ const handleGetCookies = async (payload) => {
         }
     }
 
+    if (!isCurrent()) return;
     await addHistoryEntry({
         id: requestId || String(Date.now()),
         url,
@@ -235,12 +249,15 @@ const handleGetCookies = async (payload) => {
         status,
         cookieCount,
         message,
-    });
+    }, isCurrent);
 
-    broadcastUpdate(await getStatus());
+    if (!isCurrent()) return;
+    const currentStatus = await getStatus();
+    if (isCurrent()) broadcastUpdate(currentStatus);
 };
 
-const handleSocketMessage = async (event) => {
+const handleSocketMessage = async (event, sourceSocket = socket, generation = connectionGeneration) => {
+    if (!isCurrentSocket(sourceSocket, generation)) return;
     let payload;
     try {
         payload = JSON.parse(event.data);
@@ -267,7 +284,7 @@ const handleSocketMessage = async (event) => {
             break;
 
         case "get_cookies":
-            await handleGetCookies(payload);
+            await handleGetCookies(payload, sourceSocket, generation);
             break;
 
         case "ping":
@@ -342,8 +359,10 @@ const createSocket = (password) => {
         }));
     };
 
+    const messageSocket = socket;
+    const messageGeneration = connectionGeneration;
     socket.onmessage = (event) => {
-        handleSocketMessage(event).catch(() => {});
+        handleSocketMessage(event, messageSocket, messageGeneration).catch(() => {});
     };
 
     socket.onerror = () => {
@@ -397,6 +416,8 @@ const connect = async (password, options = {}) => {
 };
 
 const disconnect = async (clearPassword = true) => {
+    // Invalidate pending requests immediately, before awaiting alarm/storage work.
+    connectionGeneration += 1;
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
