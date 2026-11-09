@@ -676,5 +676,8 @@
     },
     "setting_enable_context_menus": {
         "message": "Context Menu Options"
+    },
+    "alert_cookie_removal_unverified": {
+        "message": "This Cookie could not be uniquely identified. Refresh the list and try again. No deletion was requested."
     }
 }

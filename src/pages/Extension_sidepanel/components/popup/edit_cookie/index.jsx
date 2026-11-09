@@ -9,21 +9,29 @@ import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {observer} from "mobx-react-lite";
 import {shouldIncludeDomain} from "../../../../../utils/cookie_import";
 import {canSetCookieWithoutRemoval} from "../../../../../utils/cookie_edit";
+import {hasRemovalIdentity, hasUniqueRemovalMatch} from "../../../../../utils/cookie_removal";
+import {observe} from "mobx";
 
 const EditCookie = ({cookie, tab}) => {
     const ref = useRef(null);
     const expirationInput = useRef(null);
     const mounted = useRef(false);
     const currentCookie = useRef(cookie);
+    const currentTab = useRef(tab);
     const editorSession = useRef(0);
     const saveInProgress = useRef(false);
     const [saving, setSaving] = useState(false);
     currentCookie.current = cookie;
+    currentTab.current = tab;
 
     useEffect(() => {
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
+    useEffect(() => observe(settingStore, "popup", ({newValue}) => {
+        if (newValue !== "edit_cookie") editorSession.current++;
+    }), []);
+    useEffect(() => { editorSession.current++; }, [tab?.id, tab?.url]);
 
     const closeEditor = () => {
         editorSession.current++;
@@ -60,6 +68,7 @@ const EditCookie = ({cookie, tab}) => {
         const selection = settingStore.cookie_select;
         const session = editorSession.current;
         const url = tab?.url;
+        const tabId = tab?.id;
         if (typeof url !== "string" || !(url.startsWith("https://") || url.startsWith("http://"))) {
             settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
             return;
@@ -85,26 +94,48 @@ const EditCookie = ({cookie, tab}) => {
             url,
             value: selection.value,
         }
-        const dataRemove = {url, name: cookie.name, storeId: cookie.storeId};
+        const original = {...cookie};
+        const dataRemove = {url, name: original.name, storeId: original.storeId};
         const setWithoutRemoval = canSetCookieWithoutRemoval(cookie, selection, dataUpdate);
         const isCurrentEditor = () => mounted.current && currentCookie.current === cookie &&
             editorSession.current === session && settingStore.cookie_select === selection &&
-            settingStore.popup === "edit_cookie";
+            settingStore.popup === "edit_cookie" && currentTab.current?.id === tabId && currentTab.current?.url === url;
         saveInProgress.current = true;
         setSaving(true);
         try {
             // Avoid pre-deletion when the exposed identity and outgoing scope are unchanged.
             // Other edits remain non-atomic: a set failure does not roll back their removal.
-            // Once started, finish using only the captured data, even if this editor is closed.
-            if (!setWithoutRemoval) await chrome.cookies.remove(dataRemove);
+            if (!setWithoutRemoval) {
+                if (!hasRemovalIdentity(original)) {
+                    settingStore.alert = {type: "error", message: extension.getLang("alert_cookie_removal_unverified")};
+                    return;
+                }
+                let matches;
+                try {
+                    matches = await chrome.cookies.getAll(dataRemove);
+                } catch {
+                    if (isCurrentEditor()) settingStore.alert = {type: "error", message: extension.getLang("alert_cookie_removal_unverified")};
+                    return;
+                }
+                if (!isCurrentEditor()) return;
+                if (!hasUniqueRemovalMatch(original, matches)) {
+                    settingStore.alert = {type: "error", message: extension.getLang("alert_cookie_removal_unverified")};
+                    return;
+                }
+                // This check reduces known ambiguity, not the read/removal race.
+                await chrome.cookies.remove(dataRemove);
+            }
+            // Once mutation starts, finish the captured remove/set even if closed.
             await chrome.cookies.set(dataUpdate);
             if (isCurrentEditor()) {
                 document.dispatchEvent(new CustomEvent("update_cookie", {
                     detail: {action: "edit"},
                     bubbles: true,
                 }));
-                settingStore.alert = {type: "info", message: extension.getLang("alert_edit_cookie_success")}
-                settingStore.popup = "";
+                if (isCurrentEditor()) {
+                    settingStore.alert = {type: "info", message: extension.getLang("alert_edit_cookie_success")};
+                    if (isCurrentEditor()) closeEditor();
+                }
             }
             googleAnalytics({name: "edit_cookie", params: []});
         } catch {

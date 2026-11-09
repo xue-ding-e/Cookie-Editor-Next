@@ -535,5 +535,8 @@
     },
     "setting_enable_context_menus": {
         "message": "右鍵選單選項"
+    },
+    "alert_cookie_removal_unverified": {
+        "message": "無法唯一確認此 Cookie。請重新整理清單後再試；此次未發出刪除請求。"
     }
 }

@@ -3,6 +3,7 @@ import {googleAnalytics} from "./google_analytics";
 import {extension} from "./chrome";
 import {settingStore} from "../mobx/setting.store";
 import {serializeNetscapeCookies} from "./cookie_text_export";
+import {hasRemovalIdentity, hasUniqueRemovalMatch} from "./cookie_removal";
 
 export const copyCookie = (cookies, format = null) => {
     let type = format;
@@ -78,11 +79,28 @@ export const clearCookie = async (cookies, sourceUrl, isCurrent = () => true) =>
 
 export const deleteCookie = async (cookie, sourceUrl, isCurrent = () => true) => {
     if (!hasRemovalContext(sourceUrl, isCurrent)) return false;
-    await chrome.cookies.remove({
+    const selected = {...cookie};
+    const refuse = () => {
+        if (isCurrent()) settingStore.alert = {type: "error", message: extension.getLang("alert_cookie_removal_unverified")};
+        return false;
+    };
+    if (!hasRemovalIdentity(selected)) return refuse();
+    const details = {
         url: sourceUrl,
-        name: cookie.name,
-        storeId: cookie.storeId
-    });
+        name: selected.name,
+        storeId: selected.storeId
+    };
+    let matches;
+    try {
+        matches = await chrome.cookies.getAll(details);
+    } catch {
+        return refuse();
+    }
+    // Cancellation during this read must not start a new destructive operation.
+    if (!isCurrent()) return false;
+    if (!hasUniqueRemovalMatch(selected, matches)) return refuse();
+    // Another writer can still change the store between this check and removal.
+    await chrome.cookies.remove(details);
 
     if (isCurrent()) document.dispatchEvent(new CustomEvent("update_cookie", {
         detail: {action: "delete"},

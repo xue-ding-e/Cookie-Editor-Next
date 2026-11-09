@@ -535,5 +535,8 @@
     },
     "setting_enable_context_menus": {
         "message": "上下文菜单选项"
+    },
+    "alert_cookie_removal_unverified": {
+        "message": "无法唯一确认此 Cookie。请刷新列表后重试；此次未发出删除请求。"
     }
 }

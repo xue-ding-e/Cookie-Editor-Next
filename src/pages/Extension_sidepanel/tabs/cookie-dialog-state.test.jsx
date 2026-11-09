@@ -687,8 +687,6 @@ it.each([
     ["domain", ".example.invalid", false, "fixture-cookie", true],
     ["explicit domain without a leading dot", "example.invalid", false, "fixture-cookie", true],
     ["__Host-", "example.invalid", true, "__Host-fixture", false],
-    ["legacy domain", ".example.invalid", undefined, "fixture-cookie", true],
-    ["legacy host-only", "example.invalid", undefined, "fixture-cookie", false],
 ])("preserves the %s Cookie scope when editing only its value", async (_kind, domain, hostOnly, name, includeDomain) => {
     chromeMock.cookies.getAll.mockResolvedValue([{...fixture, domain, hostOnly, name, secure: true}]);
     render(<ShowCookie />);
@@ -703,6 +701,19 @@ it.each([
     else expect(details).not.toHaveProperty("domain");
     expect(details).not.toHaveProperty("hostOnly");
     await waitFor(() => expect(settingStore.popup).toBe(""));
+});
+
+it.each([".example.invalid", "example.invalid"])("refuses a legacy Cookie with unknown hostOnly identity for %s", async domain => {
+    chromeMock.cookies.getAll.mockResolvedValue([{...fixture, domain, hostOnly: undefined, secure: true}]);
+    render(<ShowCookie />);
+    await screen.findByPlaceholderText("placeholder_search");
+    fireEvent.click(screen.getByTestId("edit-cookie-control"));
+    fireEvent.change(screen.getByLabelText("Value"), {target: {value: "synthetic-updated"}});
+    fireEvent.click(screen.getByText("Edit"));
+    await waitFor(() => expect(settingStore.alert.message).toBe("alert_cookie_removal_unverified"));
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(chromeMock.cookies.set).not.toHaveBeenCalled();
+    expect(settingStore.popup).toBe("edit_cookie");
 });
 
 it("omits the domain when an existing domain Cookie is renamed with the __Host- prefix", async () => {

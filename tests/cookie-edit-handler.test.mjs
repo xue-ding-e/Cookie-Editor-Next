@@ -4,6 +4,7 @@ import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {shouldIncludeDomain} from "../src/utils/cookie_import.js";
 import {canSetCookieWithoutRemoval} from "../src/utils/cookie_edit.js";
+import {hasRemovalIdentity, hasUniqueRemovalMatch} from "../src/utils/cookie_removal.js";
 
 // Execute the actual editor handlers with hook doubles and synthetic browser boundaries.
 // No extension, browser profile, real Cookies, analytics or network client is loaded.
@@ -21,17 +22,25 @@ const deferred = () => {
 };
 const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
 
-function createHarness({query, remove, set, tab = tabA} = {}) {
-    const calls = {query: [], remove: [], set: [], events: [], analytics: []};
+function createHarness({query, getAll, remove, set, tab = tabA} = {}) {
+    const calls = {query: [], getAll: [], remove: [], set: [], events: [], analytics: []};
     const store = {popup: "edit_cookie", cookie_select: fixture(), alert: {}};
+    const popupListeners = new Set();
+    let popupValue = store.popup;
+    Object.defineProperty(store, "popup", {enumerable: true, get: () => popupValue, set: value => {
+        if (value !== popupValue) { popupValue = value; popupListeners.forEach(fn => fn({newValue: value})); }
+    }});
     let props = {cookie: {...store.cookie_select}, tab}, handles, outside;
     let refIndex, stateIndex, effectIndex;
     const refs = [], states = [], effects = [];
     const context = {
-        settingStore: store, shouldIncludeDomain, canSetCookieWithoutRemoval, extension: {getLang: key => key},
+        settingStore: store, shouldIncludeDomain, canSetCookieWithoutRemoval, hasRemovalIdentity, hasUniqueRemovalMatch,
+        observe: (object, key, fn) => { assert.equal(object, store); assert.equal(key, "popup"); popupListeners.add(fn); return () => popupListeners.delete(fn); },
+        extension: {getLang: key => key},
         chrome: {
             tabs: {query: async details => { calls.query.push(details); return query ? query() : [tab]; }},
             cookies: {
+                getAll: async details => { calls.getAll.push({...details}); return getAll ? getAll(details) : [{...props.cookie}]; },
                 remove: async details => { calls.remove.push({...details}); return remove?.(); },
                 set: async details => { calls.set.push({...details}); return set?.(); },
             },
@@ -63,12 +72,14 @@ function createHarness({query, remove, set, tab = tabA} = {}) {
     };
 }
 
-test("save snapshots A before any await and cannot write B or close B's editor", async () => {
+test("save finishes A's captured mutation after removal starts without affecting B", async () => {
     const query = deferred(), removal = deferred();
     const h = createHarness({query: () => query.promise, remove: () => removal.promise});
     h.edit("path", "/changed-fixture");
     h.edit("value", "submitted-a");
     const pending = h.save();
+    await flush();
+    assert.equal(h.calls.remove.length, 1);
     h.select({...fixture("fixture-b"), value: "private-b-fixture", domain: "second.invalid", storeId: "fixture-store-b"});
     query.resolve([tabA]); removal.resolve({});
     await pending;
@@ -151,6 +162,7 @@ test("cancel during removal still completes the captured write without claiming 
     const h = createHarness({remove: () => removal.promise});
     h.edit("path", "/changed-fixture");
     const pending = h.save();
+    await flush();
     assert.equal(h.calls.remove.length, 1);
     h.close();
     removal.resolve({}); await pending;
