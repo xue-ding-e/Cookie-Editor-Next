@@ -39,18 +39,27 @@ export const copyCookie = (cookies, format = null) => {
         });
 }
 
-const hasRemovalContext = (url) => {
+const hasRemovalContext = (url, isCurrent) => {
     try {
         if (typeof url === "string" && ["http:", "https:"].includes(new URL(url).protocol)) return true;
     } catch {
         // A missing or invalid displayed page must never fall back to the active tab.
     }
-    settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
+    if (isCurrent()) settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
     return false;
 };
 
-export const clearCookie = async (cookies, sourceUrl) => {
-    if (!hasRemovalContext(sourceUrl)) return false;
+const trackRemoval = (name) => {
+    try {
+        // Analytics must not turn a completed removal into a failed operation.
+        Promise.resolve(googleAnalytics({name, params: []})).catch(() => {});
+    } catch {
+        // The runtime client may also fail synchronously.
+    }
+};
+
+export const clearCookie = async (cookies, sourceUrl, isCurrent = () => true) => {
+    if (!hasRemovalContext(sourceUrl, isCurrent)) return false;
     for (let i = 0; i < cookies.length; i++) {
         await chrome.cookies.remove({
             url: sourceUrl,
@@ -59,27 +68,27 @@ export const clearCookie = async (cookies, sourceUrl) => {
         })
     }
 
-    googleAnalytics({name: "clear_cookie", params: []})
-    document.dispatchEvent(new CustomEvent("update_cookie", {
+    trackRemoval("clear_cookie");
+    if (isCurrent()) document.dispatchEvent(new CustomEvent("update_cookie", {
         detail: {action: "clear"},
         bubbles: true,
     }));
     return true;
 }
 
-export const deleteCookie = async (cookie, sourceUrl) => {
-    if (!hasRemovalContext(sourceUrl)) return false;
+export const deleteCookie = async (cookie, sourceUrl, isCurrent = () => true) => {
+    if (!hasRemovalContext(sourceUrl, isCurrent)) return false;
     await chrome.cookies.remove({
         url: sourceUrl,
         name: cookie.name,
         storeId: cookie.storeId
     });
 
-    document.dispatchEvent(new CustomEvent("update_cookie", {
+    if (isCurrent()) document.dispatchEvent(new CustomEvent("update_cookie", {
         detail: {action: "delete"},
         bubbles: true,
     }));
-    settingStore.alert = {type: "info", message: extension.getLang("alert_delete_cookie_success")}
-    googleAnalytics({name: "delete_cookie", params: []})
+    if (isCurrent()) settingStore.alert = {type: "info", message: extension.getLang("alert_delete_cookie_success")};
+    trackRemoval("delete_cookie");
     return true;
 }

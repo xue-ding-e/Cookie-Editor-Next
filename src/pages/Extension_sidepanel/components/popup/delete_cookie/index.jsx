@@ -7,14 +7,14 @@ import {extension} from "../../../../../utils/chrome";
 import {deleteCookie} from "../../../../../utils/cookie";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {settingStore} from "../../../../../mobx/setting.store";
+import {useRemovalDialog} from "../../../../../hooks/useRemovalDialog";
 
 const DeleteCookie = ({cookie, tab}) => {
     const ref = useRef(null);
-    useClickOutside(ref, () => settingStore.popup = "");
+    const {removing, close, runRemoval} = useRemovalDialog("delete_cookie", tab, cookie);
+    useClickOutside(ref, close);
 
-    const handleDeleteCookie = async () => {
-        if (await deleteCookie(cookie, tab?.url)) settingStore.popup = "";
-    }
+    const handleDeleteCookie = () => runRemoval((url, isCurrent) => deleteCookie({...cookie}, url, isCurrent));
 
     return (
         <>
@@ -41,6 +41,7 @@ const DeleteCookie = ({cookie, tab}) => {
                                 <div className={`w-full flex justify-between`}>
                                     <div className={"inline-block w-[59%]"}>
                                         <button
+                                            disabled={removing}
                                             onClick={handleDeleteCookie}
                                             className={`h-[40px] w-full rounded-[10px] bg-blue-500 text-white px-5`}>
                                             {extension.getLang("btn_delete")}
@@ -48,7 +49,7 @@ const DeleteCookie = ({cookie, tab}) => {
                                     </div>
                                     <div className={"inline-block w-[39%]"}>
                                         <button
-                                            onClick={() => settingStore.popup = ""}
+                                            onClick={close}
                                             className={`h-[40px] w-full rounded-[10px] bg-gray-200 text-gray-900 px-5`}>
                                             {extension.getLang("btn_cancel")}
                                         </button>

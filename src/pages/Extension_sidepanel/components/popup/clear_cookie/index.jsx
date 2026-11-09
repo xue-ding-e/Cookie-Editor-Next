@@ -1,23 +1,21 @@
 /*global chrome*/
 import { motion } from "framer-motion";
 import ModalPopup from "../modal_popup";
-import {useEffect, useRef} from "react";
-import {googleAnalytics} from "../../../../../utils/google_analytics";
+import {useRef} from "react";
 import {extension} from "../../../../../utils/chrome";
 import {clearCookie} from "../../../../../utils/cookie";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {settingStore} from "../../../../../mobx/setting.store";
 import {observer} from "mobx-react-lite";
+import {useRemovalDialog} from "../../../../../hooks/useRemovalDialog";
 
 const ClearCookie = ({cookies, tab}) => {
     const ref = useRef(null);
-    useClickOutside(ref, () => {
-        settingStore.popup = ""
-    })
+    const {removing, close, runRemoval} = useRemovalDialog("delete_all_cookie", tab);
+    useClickOutside(ref, close);
 
-    const handleActionRemoveCookie = async () => {
-        if (await clearCookie(cookies, tab?.url)) settingStore.popup = "";
-    }
+    const handleActionRemoveCookie = () => runRemoval((url, isCurrent) =>
+        clearCookie(cookies.map(cookie => ({...cookie})), url, isCurrent));
 
     return (
         <>
@@ -44,6 +42,7 @@ const ClearCookie = ({cookies, tab}) => {
                                 <div className={`w-full flex justify-between`}>
                                     <div className={"inline-block w-[59%]"}>
                                         <button
+                                            disabled={removing}
                                             onClick={handleActionRemoveCookie}
                                             className={`h-[40px] w-full rounded-[10px] bg-blue-500 text-white px-5`}>
                                             {extension.getLang("btn_delete")}
@@ -51,7 +50,7 @@ const ClearCookie = ({cookies, tab}) => {
                                     </div>
                                     <div className={"inline-block w-[39%]"}>
                                         <button
-                                            onClick={() => settingStore.popup = ""}
+                                            onClick={close}
                                             className={`h-[40px] w-full rounded-[10px] bg-gray-200 text-gray-900 px-5`}>
                                             {extension.getLang("btn_cancel")}
                                         </button>
