@@ -54,3 +54,9 @@ export function useRemovalDialog(popupName, tab, target) {
 
     return {removing, close, runRemoval};
 }
+
+// With confirmation disabled, the empty popup is the action's UI context.
+// Reuse the same lock and result guards; opening any popup invalidates that result.
+export function useDirectRemoval(tab) {
+    return useRemovalDialog("", tab);
+}

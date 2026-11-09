@@ -16,10 +16,12 @@ import IconShare from "../../../../icons/share";
 import IconAdd from "../../../../icons/add";
 import IconDelete from "../../../../icons/delete";
 import {accountStore} from "../../../../mobx/account.store";
+import {useDirectRemoval} from "../../../../hooks/useRemovalDialog";
 
 const TopAction = ({cookies, tab}) => {
     const confirmDialog = settingStore.confirm_dialog;
     const isLightMode = settingStore.theme_mode === "light";
+    const {removing, runRemoval} = useDirectRemoval(tab);
     const tooltipClass = `absolute top-[35px] left-1/2 translate-x-[-50%] z-10 hidden group-hover:block px-3 py-2 text-xs rounded-lg shadow-xs ${
         isLightMode ? "text-gray-800 bg-white border border-gray-200" : "text-white bg-gray-900"
     }`;
@@ -117,10 +119,13 @@ const TopAction = ({cookies, tab}) => {
                     cookies.length > 0 && (
                         <div className={`relative group`}>
                             <div
+                                aria-disabled={removing}
                                 onClick={() => {
-                                    confirmDialog.includes("delete_all") ? (settingStore.popup = "delete_all_cookie") : clearCookie(cookies, tab?.url)
+                                    if (removing) return;
+                                    confirmDialog.includes("delete_all") ? (settingStore.popup = "delete_all_cookie") :
+                                        runRemoval((url, isCurrent) => clearCookie(cookies.map(cookie => ({...cookie})), url, isCurrent));
                                 }}
-                                className={`h-[30px] w-[30px] bg-[#3C3C3C] me-2 mb-2 last:mb-0 text-white rounded flex items-center cursor-pointer group hover:bg-white hover:text-gray-800`}>
+                                className={`h-[30px] w-[30px] bg-[#3C3C3C] me-2 mb-2 last:mb-0 text-white rounded flex items-center cursor-pointer group hover:bg-white hover:text-gray-800 ${removing ? "opacity-50 pointer-events-none" : ""}`}>
                                 <IconDelete cname={`w-5 h-5 mx-auto my-[5px]`} />
                             </div>
 

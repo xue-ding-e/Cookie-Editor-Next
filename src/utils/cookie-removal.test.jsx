@@ -366,3 +366,167 @@ it.each(["row", "toolbar"])("removal dialog: actual ShowCookie refreshes and clo
     expect(chromeMock.cookies.remove).toHaveBeenCalledExactlyOnceWith({url: sourceUrl, name: fixture.name, storeId: "0"});
     expect(chromeMock.tabs.query).toHaveBeenCalledTimes(1);
 });
+
+it.each(["row", "toolbar"])("direct removal: repeated %s clicks start one operation", async path => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValue(write.promise);
+    const Component = path === "row" ? DetailCookie : TopAction;
+    render(<Component cookies={[{...fixture}]} tab={tab} />);
+    const control = screen.getByTestId("remove-cookie-control");
+    act(() => { fireEvent.click(control); fireEvent.click(control); });
+    expect(control.parentElement).toHaveAttribute("aria-disabled", "true");
+    await act(async () => { write.resolve({}); });
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+    expect(control.parentElement).toHaveAttribute("aria-disabled", "false");
+});
+
+it.each(["row", "toolbar"])("direct removal: old %s completion cannot affect a newer popup", async path => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    const Component = path === "row" ? DetailCookie : TopAction;
+    render(<Component cookies={[{...fixture}]} tab={tab} />);
+    fireEvent.click(screen.getByTestId("remove-cookie-control"));
+    act(() => runInAction(() => { settingStore.popup = "new-fixture-popup"; settingStore.alert = {message: "new-fixture-alert"}; }));
+    const update = vi.fn();
+    document.addEventListener("update_cookie", update);
+    try {
+        await act(async () => { write.resolve({}); });
+        expect(update).not.toHaveBeenCalled();
+        expect(settingStore.alert.message).toBe("new-fixture-alert");
+        expect(settingStore.popup).toBe("new-fixture-popup");
+    } finally { document.removeEventListener("update_cookie", update); }
+});
+
+function renderDirect(path, cookies = [{...fixture}], displayedTab = tab) {
+    const Component = path === "row" ? DetailCookie : TopAction;
+    return render(<Component cookies={cookies} tab={displayedTab} />);
+}
+const clickDirect = () => fireEvent.click(screen.getByTestId("remove-cookie-control"));
+
+it.each(["row", "toolbar"])("direct removal: %s failure is handled and permits an explicit retry", async path => {
+    chromeMock.cookies.remove.mockRejectedValueOnce(new Error("Synthetic direct rejection"));
+    renderDirect(path);
+    clickDirect();
+    await waitFor(() => expect(settingStore.alert).toEqual({type: "error", message: "msg_error"}));
+    expect(screen.getByTestId("remove-cookie-control").parentElement).toHaveAttribute("aria-disabled", "false");
+    expect(googleAnalytics).not.toHaveBeenCalled();
+    clickDirect();
+    await waitFor(() => expect(googleAnalytics).toHaveBeenCalledTimes(1));
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(2);
+});
+
+it.each(["row", "toolbar"])("direct removal: stale %s rejection does not replace a newer alert", async path => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    renderDirect(path);
+    clickDirect();
+    act(() => runInAction(() => { settingStore.popup = "new-fixture-popup"; settingStore.alert = {message: "new-fixture-alert"}; }));
+    await act(async () => { write.reject(new Error("Synthetic stale direct rejection")); });
+    expect(settingStore.alert.message).toBe("new-fixture-alert");
+    expect(settingStore.popup).toBe("new-fixture-popup");
+    expect(googleAnalytics).not.toHaveBeenCalled();
+});
+
+it.each(["row", "toolbar"])("direct removal: %s result stays invalid after a batched popup opens and closes", async path => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    renderDirect(path);
+    clickDirect();
+    act(() => runInAction(() => { settingStore.popup = "new-fixture-popup"; settingStore.popup = ""; settingStore.alert = {message: "new-fixture-alert"}; }));
+    const update = vi.fn();
+    document.addEventListener("update_cookie", update);
+    try {
+        await act(async () => { write.resolve({}); });
+        expect(update).not.toHaveBeenCalled();
+        expect(settingStore.alert.message).toBe("new-fixture-alert");
+    } finally { document.removeEventListener("update_cookie", update); }
+});
+
+it.each(["row", "toolbar"].flatMap(path => ["tab", "tab and back", "unmount"].map(change => [path, change])))
+("direct removal: %s ignores completion after %s", async (path, change) => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    const cookies = [{...fixture}];
+    const Component = path === "row" ? DetailCookie : TopAction;
+    const view = renderDirect(path, cookies);
+    clickDirect();
+    if (change === "unmount") view.unmount();
+    else {
+        view.rerender(<Component cookies={cookies} tab={{id: 2, url: "https://different.invalid/"}} />);
+        if (change === "tab and back") view.rerender(<Component cookies={cookies} tab={tab} />);
+    }
+    const update = vi.fn();
+    document.addEventListener("update_cookie", update);
+    try {
+        await act(async () => { write.resolve({}); });
+        expect(update).not.toHaveBeenCalled();
+        expect(settingStore.alert).toEqual({});
+    } finally { document.removeEventListener("update_cookie", update); }
+});
+
+it.each(["row", "toolbar"])("direct removal: %s stays locked through opening and closing another popup", async path => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    renderDirect(path);
+    clickDirect();
+    act(() => runInAction(() => { settingStore.popup = "new-fixture-popup"; }));
+    act(() => runInAction(() => { settingStore.popup = ""; }));
+    clickDirect();
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+    await act(async () => { write.resolve({}); });
+    clickDirect();
+    await waitFor(() => expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(2));
+});
+
+it.each(["row", "toolbar"])("direct removal: %s cannot begin behind an already open popup", async path => {
+    runInAction(() => { settingStore.popup = "new-fixture-popup"; });
+    renderDirect(path);
+    clickDirect();
+    await act(async () => {});
+    expect(chromeMock.cookies.remove).not.toHaveBeenCalled();
+    expect(settingStore.popup).toBe("new-fixture-popup");
+});
+
+it("direct removal: clear snapshots each submitted Cookie before waiting", async () => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    const cookies = [{...fixture}, {...fixture, name: "fixture-second", storeId: "1"}];
+    renderDirect("toolbar", cookies);
+    clickDirect();
+    cookies[1].name = "fixture-mutated";
+    cookies[1].storeId = "2";
+    cookies.push({...fixture, name: "fixture-later"});
+    await act(async () => { write.resolve({}); });
+    expect(chromeMock.cookies.remove.mock.calls).toEqual([
+        [{url: sourceUrl, name: fixture.name, storeId: "0"}],
+        [{url: sourceUrl, name: "fixture-second", storeId: "1"}],
+    ]);
+});
+
+it.each(["row", "toolbar"])("direct removal: actual ShowCookie refreshes after successful %s removal", async path => {
+    chromeMock.tabs.query.mockResolvedValue([tab]);
+    chromeMock.cookies.getAll.mockResolvedValueOnce([{...fixture}]).mockResolvedValue([]);
+    render(<ShowCookie />);
+    await screen.findByPlaceholderText("placeholder_search");
+    fireEvent.click(screen.getAllByTestId("remove-cookie-control")[path === "toolbar" ? 0 : 1]);
+    expect(await screen.findByText("msg_no_cookies")).toBeInTheDocument();
+    expect(chromeMock.cookies.getAll).toHaveBeenCalledTimes(2);
+    expect(chromeMock.cookies.remove).toHaveBeenCalledExactlyOnceWith({url: sourceUrl, name: fixture.name, storeId: "0"});
+    expect(chromeMock.tabs.query).toHaveBeenCalledTimes(1);
+});
+
+it.each(["row", "toolbar"])("direct removal: pending %s cannot open its confirmation after the preference changes", async path => {
+    const write = deferred();
+    chromeMock.cookies.remove.mockReturnValueOnce(write.promise);
+    renderDirect(path);
+    clickDirect();
+    act(() => runInAction(() => { settingStore.confirm_dialog = ["delete", "delete_all"]; }));
+    clickDirect();
+    expect(settingStore.popup).toBe("");
+    expect(screen.queryByRole("button", {name: "btn_delete"})).not.toBeInTheDocument();
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+    await act(async () => { write.resolve({}); });
+    clickDirect();
+    expect(screen.getByRole("button", {name: "btn_delete"})).toBeInTheDocument();
+    expect(chromeMock.cookies.remove).toHaveBeenCalledTimes(1);
+});

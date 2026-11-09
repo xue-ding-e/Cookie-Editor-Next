@@ -11,6 +11,7 @@ import {settingStore} from "../../../../mobx/setting.store";
 import IconCopy from "../../../../icons/copy";
 import IconDelete from "../../../../icons/delete";
 import IconEdit from "../../../../icons/edit";
+import {useDirectRemoval} from "../../../../hooks/useRemovalDialog";
 
 const DetailCookie = ({cookies, tab}) => {
     const [search, setSearch] = useState("");
@@ -19,10 +20,12 @@ const DetailCookie = ({cookies, tab}) => {
     const confirmDialog = settingStore.confirm_dialog;
     const isLightMode = settingStore.theme_mode === "light";
     const [cookieSelect, setCookieSelect] = useState(undefined);
+    const {removing, runRemoval} = useDirectRemoval(tab);
 
     const handleSelectAction = async (cookie, action) => {
+        if (action === "delete_cookie" && removing) return;
         if (action === "delete_cookie" && !confirmDialog.includes("delete")) {
-            await deleteCookie(cookie, tab?.url)
+            await runRemoval((url, isCurrent) => deleteCookie({...cookie}, url, isCurrent));
         } else {
             settingStore.popup = action;
             setCookieSelect(JSON.parse(JSON.stringify(cookie)));
@@ -157,8 +160,9 @@ const DetailCookie = ({cookies, tab}) => {
                                 <IconCopy cname={`w-4 h-4 ${isLightMode ? "text-gray-800" : "text-white"}`}/>
                             </div>
                             <div
+                                aria-disabled={removing}
                                 onClick={() => handleSelectAction(cookie, "delete_cookie")}
-                                className={`w-6 h-6 mb-2 p-1 rounded-[5px] cursor-pointer ${isLightMode ? "hover:bg-gray-300" : "hover:bg-gray-500"}`}>
+                                className={`w-6 h-6 mb-2 p-1 rounded-[5px] cursor-pointer ${removing ? "opacity-50 pointer-events-none" : ""} ${isLightMode ? "hover:bg-gray-300" : "hover:bg-gray-500"}`}>
                                 <IconDelete cname={`w-4 h-4 ${isLightMode ? "text-gray-800" : "text-white"}`} />
                             </div>
                         </div>
