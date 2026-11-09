@@ -173,13 +173,16 @@ const sendPing = () => {
 
 const handleGetCookies = async (payload) => {
     const requestId = payload.request_id || payload.requestId;
-    const url = normalizeUrl(payload.url);
-    const domain = payload.domain || (url ? new URL(url).hostname : "");
+    let url = "";
+    let domain = "";
     let status = "success";
     let message = "";
     let cookieCount = 0;
 
     try {
+        // Malformed remote input must use the same error response/history path.
+        url = normalizeUrl(payload.url);
+        domain = payload.domain || (url ? new URL(url).hostname : "");
         const stored = await storageGet([STORAGE_KEYS.password]);
         const password = stored[STORAGE_KEYS.password];
 
