@@ -109,8 +109,8 @@ const normalizeUrl = (url) => {
     return `https://${url}`;
 };
 
-const resolvePendingConnect = (status) => {
-    if (pendingConnectResolve) {
+const resolvePendingConnect = (status, connectionResolve) => {
+    if (pendingConnectResolve && pendingConnectResolve === connectionResolve) {
         pendingConnectResolve(status);
         pendingConnectResolve = null;
         pendingConnectReject = null;
@@ -159,12 +159,15 @@ const stopHeartbeat = () => {
     }
 };
 
-const startKeepAlive = async () => {
-    if (!(await hasRequiredPermissions())) {
+const startKeepAlive = async (isCurrent = () => true) => {
+    if (!isCurrent() || !(await hasRequiredPermissions()) || !isCurrent()) {
         return;
     }
 
     await chrome.alarms.create(ALARM_NAME, {periodInMinutes: 1});
+    // An alarm creation already issued cannot safely be cleared here: a newer
+    // connection uses the same alarm name. Do not start more work for a stale one.
+    if (!isCurrent()) return;
     startHeartbeat();
 };
 
@@ -256,8 +259,9 @@ const handleGetCookies = async (payload, sourceSocket, generation) => {
     if (isCurrent()) broadcastUpdate(currentStatus);
 };
 
-const handleSocketMessage = async (event, sourceSocket = socket, generation = connectionGeneration) => {
-    if (!isCurrentSocket(sourceSocket, generation)) return;
+const handleSocketMessage = async (event, sourceSocket = socket, generation = connectionGeneration, connectionResolve = null) => {
+    const isCurrent = () => isCurrentSocket(sourceSocket, generation);
+    if (!isCurrent()) return;
     let payload;
     try {
         payload = JSON.parse(event.data);
@@ -274,12 +278,15 @@ const handleSocketMessage = async (event, sourceSocket = socket, generation = co
                 [STORAGE_KEYS.clientKey]: payload.client_key || payload.clientKey || "",
                 [STORAGE_KEYS.connectedAt]: Date.now(),
             });
+            if (!isCurrent()) return;
             reconnectAttempts = 0;
-            await startKeepAlive();
+            await startKeepAlive(isCurrent);
+            if (!isCurrent()) return;
             {
                 const status = await getStatus();
+                if (!isCurrent()) return;
                 broadcastUpdate(status);
-                resolvePendingConnect(status);
+                if (isCurrent()) resolvePendingConnect(status, connectionResolve);
             }
             break;
 
@@ -334,7 +341,8 @@ const setDisconnectedState = async (notify = true) => {
     }
 };
 
-const createSocket = (password) => {
+// Automatic reconnects keep the existing waiter, bound to this socket's acknowledgement.
+const createSocket = (password, connectionResolve = pendingConnectResolve) => {
     closeSocket();
 
     try {
@@ -362,7 +370,7 @@ const createSocket = (password) => {
     const messageSocket = socket;
     const messageGeneration = connectionGeneration;
     socket.onmessage = (event) => {
-        handleSocketMessage(event, messageSocket, messageGeneration).catch(() => {});
+        handleSocketMessage(event, messageSocket, messageGeneration, connectionResolve).catch(() => {});
     };
 
     socket.onerror = () => {
@@ -407,7 +415,7 @@ const connect = async (password, options = {}) => {
         return new Promise((resolve, reject) => {
             pendingConnectResolve = resolve;
             pendingConnectReject = reject;
-            createSocket(password);
+            createSocket(password, resolve);
         });
     }
 
