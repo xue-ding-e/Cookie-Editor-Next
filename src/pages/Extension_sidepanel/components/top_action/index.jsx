@@ -143,7 +143,7 @@ const TopAction = ({cookies, tab}) => {
 
             <ImportCookie tab={tab}/>
 
-            <ExportCookie />
+            <ExportCookie tab={tab}/>
         </>
     )
 }
