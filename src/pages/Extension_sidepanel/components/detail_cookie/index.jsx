@@ -22,7 +22,7 @@ const DetailCookie = ({cookies, tab}) => {
 
     const handleSelectAction = async (cookie, action) => {
         if (action === "delete_cookie" && !confirmDialog.includes("delete")) {
-            await deleteCookie(cookie)
+            await deleteCookie(cookie, tab?.url)
         } else {
             settingStore.popup = action;
             setCookieSelect(JSON.parse(JSON.stringify(cookie)));
@@ -166,7 +166,7 @@ const DetailCookie = ({cookies, tab}) => {
                 ))
             }
 
-            <DeleteCookie cookie={cookieSelect}/>
+            <DeleteCookie cookie={cookieSelect} tab={tab}/>
 
             <EditCookie cookie={cookieSelect} tab={tab}/>
 

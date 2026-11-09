@@ -118,7 +118,7 @@ const TopAction = ({cookies, tab}) => {
                         <div className={`relative group`}>
                             <div
                                 onClick={() => {
-                                    confirmDialog.includes("delete_all") ? (settingStore.popup = "delete_all_cookie") : clearCookie(cookies)
+                                    confirmDialog.includes("delete_all") ? (settingStore.popup = "delete_all_cookie") : clearCookie(cookies, tab?.url)
                                 }}
                                 className={`h-[30px] w-[30px] bg-[#3C3C3C] me-2 mb-2 last:mb-0 text-white rounded flex items-center cursor-pointer group hover:bg-white hover:text-gray-800`}>
                                 <IconDelete cname={`w-5 h-5 mx-auto my-[5px]`} />
@@ -135,7 +135,7 @@ const TopAction = ({cookies, tab}) => {
 
             <CopyCookie cookies={cookies}/>
 
-            <ClearCookie cookies={cookies}/>
+            <ClearCookie cookies={cookies} tab={tab}/>
 
             <ShareCookie cookies={cookies}/>
 

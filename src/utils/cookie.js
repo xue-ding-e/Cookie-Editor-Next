@@ -39,11 +39,21 @@ export const copyCookie = (cookies, format = null) => {
         });
 }
 
-export const clearCookie = async (cookies) => {
-    const [tabCurrent] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+const hasRemovalContext = (url) => {
+    try {
+        if (typeof url === "string" && ["http:", "https:"].includes(new URL(url).protocol)) return true;
+    } catch {
+        // A missing or invalid displayed page must never fall back to the active tab.
+    }
+    settingStore.alert = {type: "error", message: extension.getLang("msg_error")};
+    return false;
+};
+
+export const clearCookie = async (cookies, sourceUrl) => {
+    if (!hasRemovalContext(sourceUrl)) return false;
     for (let i = 0; i < cookies.length; i++) {
         await chrome.cookies.remove({
-            url: tabCurrent.url,
+            url: sourceUrl,
             name: cookies[i].name,
             storeId: cookies[i].storeId
         })
@@ -54,12 +64,13 @@ export const clearCookie = async (cookies) => {
         detail: {action: "clear"},
         bubbles: true,
     }));
+    return true;
 }
 
-export const deleteCookie = async (cookie) => {
-    const [tabCurrent] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+export const deleteCookie = async (cookie, sourceUrl) => {
+    if (!hasRemovalContext(sourceUrl)) return false;
     await chrome.cookies.remove({
-        url: tabCurrent.url,
+        url: sourceUrl,
         name: cookie.name,
         storeId: cookie.storeId
     });
@@ -70,4 +81,5 @@ export const deleteCookie = async (cookie) => {
     }));
     settingStore.alert = {type: "info", message: extension.getLang("alert_delete_cookie_success")}
     googleAnalytics({name: "delete_cookie", params: []})
+    return true;
 }

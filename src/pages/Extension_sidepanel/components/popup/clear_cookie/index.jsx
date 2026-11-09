@@ -9,15 +9,14 @@ import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {settingStore} from "../../../../../mobx/setting.store";
 import {observer} from "mobx-react-lite";
 
-const ClearCookie = ({cookies}) => {
+const ClearCookie = ({cookies, tab}) => {
     const ref = useRef(null);
     useClickOutside(ref, () => {
         settingStore.popup = ""
     })
 
     const handleActionRemoveCookie = async () => {
-        await clearCookie(cookies);
-        settingStore.popup = ""
+        if (await clearCookie(cookies, tab?.url)) settingStore.popup = "";
     }
 
     return (

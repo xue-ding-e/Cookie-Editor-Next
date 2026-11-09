@@ -8,13 +8,12 @@ import {deleteCookie} from "../../../../../utils/cookie";
 import {useClickOutside} from "../../../../../hooks/useClickOutside";
 import {settingStore} from "../../../../../mobx/setting.store";
 
-const DeleteCookie = ({cookie}) => {
+const DeleteCookie = ({cookie, tab}) => {
     const ref = useRef(null);
     useClickOutside(ref, () => settingStore.popup = "");
 
     const handleDeleteCookie = async () => {
-        await deleteCookie(cookie)
-        settingStore.popup = ""
+        if (await deleteCookie(cookie, tab?.url)) settingStore.popup = "";
     }
 
     return (
