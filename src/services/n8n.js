@@ -477,7 +477,10 @@ const disconnect = async (clearPassword = true) => {
 };
 
 const maintainConnection = async () => {
+    const maintainedGeneration = connectionGeneration;
     const data = await storageGet([STORAGE_KEYS.connected, STORAGE_KEYS.password]);
+    // An alarm read cannot revive a disconnected or replaced session.
+    if (connectionGeneration !== maintainedGeneration) return;
 
     if (!data[STORAGE_KEYS.connected] || !data[STORAGE_KEYS.password]) {
         await stopKeepAlive();
