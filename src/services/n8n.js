@@ -428,6 +428,11 @@ const connect = async (password, options = {}) => {
         [STORAGE_KEYS.password]: password,
         [STORAGE_KEYS.connected]: true,
     });
+    // A write already issued cannot be undone here, but its retired completion
+    // must not create a socket or replace the current connection's waiter.
+    if (connectionGeneration !== requestedGeneration) {
+        throw new Error("Connection request was cancelled");
+    }
 
     if (awaitConnected) {
         return new Promise((resolve, reject) => {
