@@ -383,10 +383,13 @@ const createSocket = (password, connectionResolve = pendingConnectResolve) => {
     };
 
     socket.onclose = async () => {
+        if (socket !== messageSocket || connectionGeneration !== messageGeneration) return;
         clearTimeout(connectionTimeout);
         socket = null;
 
         const data = await storageGet([STORAGE_KEYS.connected]);
+        // A disconnected or replaced session cannot schedule work for the new one.
+        if (connectionGeneration !== messageGeneration) return;
         if (data[STORAGE_KEYS.connected]) {
             scheduleReconnect();
         } else {
