@@ -3,7 +3,7 @@ name: Validate source (no release)
 on:
   workflow_dispatch:
   push:
-    branches: [fix/n8n-stale-close-continuation]
+    branches: [fix/n8n-stale-close-continuation, fix/n8n-stale-reconnect-read]
 
 permissions:
   contents: read

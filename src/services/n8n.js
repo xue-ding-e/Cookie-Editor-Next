@@ -310,10 +310,14 @@ const scheduleReconnect = () => {
         clearTimeout(reconnectTimer);
     }
 
-    reconnectTimer = setTimeout(async () => {
-        reconnectTimer = null;
+    const reconnectGeneration = connectionGeneration;
+    const scheduledTimer = setTimeout(async () => {
+        // Retire this handle without clearing a newer session's reconnect timer.
+        if (reconnectTimer === scheduledTimer) reconnectTimer = null;
+        if (connectionGeneration !== reconnectGeneration) return;
 
         const data = await storageGet([STORAGE_KEYS.connected, STORAGE_KEYS.password]);
+        if (connectionGeneration !== reconnectGeneration) return;
         if (!data[STORAGE_KEYS.connected] || !data[STORAGE_KEYS.password]) {
             return;
         }
@@ -326,6 +330,7 @@ const scheduleReconnect = () => {
 
         connect(data[STORAGE_KEYS.password], {awaitConnected: false}).catch(() => {});
     }, Math.min(1000 * reconnectAttempts, 10000));
+    reconnectTimer = scheduledTimer;
 };
 
 const setDisconnectedState = async (notify = true) => {
