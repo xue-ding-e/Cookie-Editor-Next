@@ -49,5 +49,7 @@ jobs:
           if [ -f tests/cookie-edit-handler.test.mjs ]; then
             node --test tests/cookie-edit-handler.test.mjs
           fi
+      - name: Test n8n socket lifecycle with synthetic boundaries
+        run: node --test tests/n8n-*.test.mjs
       - name: Compile extension without installation or browser access
         run: npm run build

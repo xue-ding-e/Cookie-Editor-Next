@@ -351,8 +351,12 @@ const createSocket = (password, connectionResolve = pendingConnectResolve) => {
         throw error;
     }
 
+    const timeoutSocket = socket;
+    const timeoutGeneration = connectionGeneration;
     const connectionTimeout = setTimeout(() => {
-        if (socket && socket.readyState !== WebSocket.OPEN) {
+        // A replaced socket must not close or reject a newer connection.
+        if (socket === timeoutSocket && connectionGeneration === timeoutGeneration &&
+            socket.readyState !== WebSocket.OPEN) {
             closeSocket();
             rejectPendingConnect(new Error("Connection timeout"));
             scheduleReconnect();
