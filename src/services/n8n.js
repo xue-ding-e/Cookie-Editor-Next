@@ -410,7 +410,13 @@ const connect = async (password, options = {}) => {
         throw new Error("Password is required");
     }
 
-    if (!(await hasRequiredPermissions())) {
+    const requestedGeneration = connectionGeneration;
+    const permitted = await hasRequiredPermissions();
+    // Disconnect or replacement while checking permissions retires this request.
+    if (connectionGeneration !== requestedGeneration) {
+        throw new Error("Connection request was cancelled");
+    }
+    if (!permitted) {
         throw new Error("Missing n8n permissions");
     }
 
