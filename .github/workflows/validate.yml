@@ -1,7 +1,9 @@
-name: Validate source (manual only)
+name: Validate source (no release)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [fix/n8n-stale-close-continuation]
 
 permissions:
   contents: read
