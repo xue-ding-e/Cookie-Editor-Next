@@ -171,8 +171,11 @@ const startKeepAlive = async (isCurrent = () => true) => {
     startHeartbeat();
 };
 
-const stopKeepAlive = async () => {
+const stopKeepAlive = async (isCurrent = () => true) => {
+    if (!isCurrent()) return;
     await chrome.alarms.clear(ALARM_NAME);
+    // The shared alarm clear is already issued; do not also stop a newer heartbeat.
+    if (!isCurrent()) return;
     stopHeartbeat();
 };
 
@@ -449,13 +452,17 @@ const connect = async (password, options = {}) => {
 const disconnect = async (clearPassword = true) => {
     // Invalidate pending requests immediately, before awaiting alarm/storage work.
     connectionGeneration += 1;
+    const disconnectGeneration = connectionGeneration;
+    const isCurrent = () => connectionGeneration === disconnectGeneration;
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
 
     reconnectAttempts = 0;
-    await stopKeepAlive();
+    await stopKeepAlive(isCurrent);
+    // A connection created while alarm cleanup was pending owns the current state.
+    if (!isCurrent()) return getStatus();
 
     if (isSocketOpen()) {
         socket.send(JSON.stringify({type: "disconnect"}));
