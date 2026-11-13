@@ -47,7 +47,7 @@ const N8nConnectModal = ({error, onSubmitConnect}) => {
                             n8nStore.password = e.target.value;
                         }}
                         onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" && !n8nStore.loading) {
                                 onSubmitConnect();
                             }
                         }}
