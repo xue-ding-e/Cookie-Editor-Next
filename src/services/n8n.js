@@ -438,6 +438,8 @@ const connect = async (password, options = {}) => {
     }
 
     if (awaitConnected) {
+        // Explicit replacement retires the old request; automatic reconnect keeps it.
+        rejectPendingConnect(new Error("Connection request was replaced"));
         return new Promise((resolve, reject) => {
             pendingConnectResolve = resolve;
             pendingConnectReject = reject;
