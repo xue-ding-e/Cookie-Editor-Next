@@ -452,7 +452,7 @@ const connect = async (password, options = {}) => {
 const disconnect = async (clearPassword = true) => {
     // Invalidate pending requests immediately, before awaiting alarm/storage work.
     connectionGeneration += 1;
-    const disconnectGeneration = connectionGeneration;
+    let disconnectGeneration = connectionGeneration;
     const isCurrent = () => connectionGeneration === disconnectGeneration;
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -469,6 +469,8 @@ const disconnect = async (clearPassword = true) => {
     }
 
     closeSocket();
+    // Closing our own socket advances the generation; later replacements retire cleanup.
+    disconnectGeneration = connectionGeneration;
 
     const keysToRemove = [
         STORAGE_KEYS.connected,
@@ -481,9 +483,14 @@ const disconnect = async (clearPassword = true) => {
     }
 
     await storageRemove(keysToRemove);
+    // Already-issued storage operations cannot be undone, but stale cleanup must
+    // not start another write or report a retired status after replacement.
+    if (!isCurrent()) return getStatus();
     await storageSet({[STORAGE_KEYS.connected]: false});
+    if (!isCurrent()) return getStatus();
 
     const status = await getStatus();
+    if (!isCurrent()) return getStatus();
     broadcastUpdate(status);
     return status;
 };
