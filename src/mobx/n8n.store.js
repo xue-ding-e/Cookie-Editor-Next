@@ -128,8 +128,8 @@ class N8nStore {
         }
     }
 
-    async connect() {
-        if (!this.password.trim()) {
+    async connect(password = this.password) {
+        if (!password.trim()) {
             return {success: false, message: "Password is required"};
         }
 
@@ -142,7 +142,7 @@ class N8nStore {
         try {
             const response = await chrome.runtime.sendMessage({
                 action: "n8n_connect",
-                password: this.password,
+                password,
             });
 
             if (response?.success) {

@@ -199,6 +199,7 @@ const ExtensionN8n = () => {
     };
 
     const handleSubmitConnect = async () => {
+        const password = n8nStore.password;
         setError("");
 
         const hasPermission = await n8nStore.ensurePermissions();
@@ -207,7 +208,7 @@ const ExtensionN8n = () => {
             return;
         }
 
-        const result = await n8nStore.connect();
+        const result = await n8nStore.connect(password);
         if (!result.success) {
             if (result.needPermission) {
                 n8nStore.requestConnectFlow();
