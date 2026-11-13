@@ -502,7 +502,7 @@ const maintainConnection = async () => {
     if (connectionGeneration !== maintainedGeneration) return;
 
     if (!data[STORAGE_KEYS.connected] || !data[STORAGE_KEYS.password]) {
-        await stopKeepAlive();
+        await stopKeepAlive(() => connectionGeneration === maintainedGeneration);
         return;
     }
 
