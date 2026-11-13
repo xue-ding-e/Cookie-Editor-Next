@@ -452,6 +452,8 @@ const connect = async (password, options = {}) => {
 const disconnect = async (clearPassword = true) => {
     // Invalidate pending requests immediately, before awaiting alarm/storage work.
     connectionGeneration += 1;
+    // Settle this session's waiter before cleanup can yield to a replacement.
+    rejectPendingConnect(new Error("Connection request was cancelled"));
     let disconnectGeneration = connectionGeneration;
     const isCurrent = () => connectionGeneration === disconnectGeneration;
     if (reconnectTimer) {
