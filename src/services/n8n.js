@@ -25,6 +25,7 @@ let pendingConnectResolve = null;
 let pendingConnectReject = null;
 let heartbeatInterval = null;
 let alarmListenerRegistered = false;
+let historyMutationQueue = Promise.resolve();
 
 const hasRequiredPermissions = () => checkN8nPermissions();
 
@@ -79,7 +80,15 @@ const getStatus = async () => {
     };
 };
 
-const addHistoryEntry = async (entry, isCurrent = () => true) => {
+// Serialize this service instance's history writes, including read-modify-write appends.
+// A failed mutation must not prevent later entries or clears from running.
+const queueHistoryMutation = (mutation) => {
+    const result = historyMutationQueue.then(mutation);
+    historyMutationQueue = result.catch(() => {});
+    return result;
+};
+
+const addHistoryEntry = (entry, isCurrent = () => true) => queueHistoryMutation(async () => {
     if (!isCurrent()) return;
     const data = await storageGet([STORAGE_KEYS.history]);
     if (!isCurrent()) return;
@@ -87,10 +96,10 @@ const addHistoryEntry = async (entry, isCurrent = () => true) => {
     // A storage write that already started cannot be rolled back by disconnection.
     await storageSet({[STORAGE_KEYS.history]: history});
     return history;
-};
+});
 
 const clearHistory = async () => {
-    await storageSet({[STORAGE_KEYS.history]: []});
+    await queueHistoryMutation(() => storageSet({[STORAGE_KEYS.history]: []}));
     const status = await getStatus();
     broadcastUpdate(status);
     return status;

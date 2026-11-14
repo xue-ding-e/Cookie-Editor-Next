@@ -19,7 +19,7 @@ function harness() {
     const sockets = [], queries = [], encryptions = [], broadcasts = [], historyWrites = [], alarms = [];
     const storage = {n8n_history: []};
     const read = deferred();
-    let nextGet, nextSet, nextClear;
+    let nextGet, nextSet, nextClear, nextHistoryWriteError;
     const timers = new Map();
     let timerId = 0;
     class Socket {
@@ -53,6 +53,10 @@ function harness() {
                     } else done(snapshot);
                 },
                 set(data, done) {
+                    if (nextHistoryWriteError && "n8n_history" in data) {
+                        const error = nextHistoryWriteError; nextHistoryWriteError = null;
+                        throw error;
+                    }
                     if ("n8n_history" in data) historyWrites.push(data.n8n_history);
                     if (nextSet && "n8n_history" in data) {
                         const pause = nextSet; nextSet = null;
@@ -88,6 +92,7 @@ function harness() {
         },
         pauseGet(matches) { nextGet = {matches}; return nextGet; },
         pauseHistoryWrite() { nextSet = {}; return nextSet; },
+        failNextHistoryWrite(error) { nextHistoryWriteError = error; },
         pauseAlarmClear() { nextClear = deferred(); return nextClear; },
     };
 }
@@ -223,4 +228,84 @@ test("n8n suppresses a status broadcast whose read completed after disconnection
     const broadcastCount = h.broadcasts.length;
     statusRead.release(); await flush();
     assert.equal(h.broadcasts.length, broadcastCount);
+});
+
+for (const outcome of ["success", "error"]) test(`n8n history mutation: retains both concurrent ${outcome} requests`, async () => {
+    const h = harness(), a = await h.connect();
+    a.receive({...request, request_id: "synthetic-first"});
+    a.receive({...request, request_id: "synthetic-second"});
+    await flush();
+    assert.equal(h.queries.length, 2);
+    if (outcome === "success") h.read.resolve([fixture]);
+    else h.read.reject(new Error("Synthetic query failure"));
+    await flush();
+    assert.equal(responses(a).length, 2);
+    assert.equal(h.historyWrites.length, 2);
+    assert.deepEqual(Array.from(h.storage.n8n_history, entry => entry.id).sort(), ["synthetic-first", "synthetic-second"]);
+    assert.ok(h.storage.n8n_history.every(entry => entry.status === outcome));
+});
+
+test("n8n history mutation: clear follows an already-started history append", async () => {
+    const h = harness(), a = await h.connect();
+    const historyRead = h.pauseGet(keys => keys.length === 1 && keys[0] === "n8n_history");
+    a.receive(); await flush(); h.read.resolve([fixture]); await flush();
+    assert.equal(responses(a).length, 1);
+    assert.ok(historyRead.release);
+    const clearing = h.service.clearHistory();
+    await flush();
+    historyRead.release();
+    await clearing; await flush();
+    assert.equal(h.storage.n8n_history.length, 0);
+});
+
+test("n8n history mutation: preserves the 50-entry limit and sequential clear", async () => {
+    const h = harness(), a = await h.connect();
+    h.storage.n8n_history = Array.from({length: 50}, (_, i) => ({id: `synthetic-old-${i}`}));
+    a.receive(); await flush(); h.read.resolve([fixture]); await flush();
+    assert.equal(h.storage.n8n_history.length, 50);
+    assert.equal(h.storage.n8n_history[0].id, request.request_id);
+    assert.equal(h.storage.n8n_history[49].id, "synthetic-old-48");
+    await h.service.clearHistory();
+    assert.equal(h.storage.n8n_history.length, 0);
+});
+
+test("n8n history mutation: keeps requests appended after a queued clear", async () => {
+    const h = harness(), a = await h.connect();
+    const historyRead = h.pauseGet(keys => keys.length === 1 && keys[0] === "n8n_history");
+    a.receive({...request, request_id: "synthetic-before-clear"});
+    await flush(); h.read.resolve([fixture]); await flush();
+    assert.ok(historyRead.release);
+    const clearing = h.service.clearHistory();
+    a.receive({...request, request_id: "synthetic-after-clear"});
+    await flush();
+    assert.equal(responses(a).length, 2);
+    historyRead.release();
+    await clearing; await flush();
+    assert.deepEqual(Array.from(h.storage.n8n_history, entry => entry.id), ["synthetic-after-clear"]);
+});
+
+test("n8n history mutation: drops queued entries after their connection retires", async () => {
+    const h = harness(), a = await h.connect();
+    const historyRead = h.pauseGet(keys => keys.length === 1 && keys[0] === "n8n_history");
+    a.receive({...request, request_id: "synthetic-first"});
+    a.receive({...request, request_id: "synthetic-queued"});
+    await flush(); h.read.resolve([fixture]); await flush();
+    assert.ok(historyRead.release);
+    assert.equal(responses(a).length, 2);
+    await h.service.disconnect(true);
+    const broadcastCount = h.broadcasts.length;
+    historyRead.release(); await flush();
+    assert.equal(h.historyWrites.length, 0);
+    assert.equal(h.broadcasts.length, broadcastCount);
+});
+
+test("n8n history mutation: a failed clear does not poison later mutations", async () => {
+    const h = harness();
+    h.storage.n8n_history = [{id: "synthetic-kept"}];
+    h.failNextHistoryWrite(new Error("Synthetic history write failure"));
+    await assert.rejects(h.service.clearHistory(), /Synthetic history write failure/);
+    assert.equal(h.storage.n8n_history.length, 1);
+    await h.service.clearHistory();
+    assert.equal(h.storage.n8n_history.length, 0);
+    assert.equal(h.historyWrites.length, 1);
 });
