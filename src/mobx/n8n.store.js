@@ -16,6 +16,7 @@ class N8nStore {
     alert = {type: "", message: ""};
     pendingConnectAfterPermission = false;
     showConnectPopup = false;
+    connectPopupSession = 0;
     showStatusPanel = false;
 
     constructor() {
@@ -54,11 +55,13 @@ class N8nStore {
     }
 
     openConnectPopup() {
+        this.connectPopupSession++;
         this.showConnectPopup = true;
         this.showConnectForm = true;
     }
 
     closeConnectPopup() {
+        this.connectPopupSession++;
         this.showConnectPopup = false;
         this.showConnectForm = false;
         this.password = "";
@@ -128,12 +131,16 @@ class N8nStore {
         }
     }
 
-    async connect(password = this.password) {
+    async connect(password = this.password, popupSession = this.connectPopupSession) {
         if (!password.trim()) {
             return {success: false, message: "Password is required"};
         }
 
         const hasPermission = await this.ensurePermissions();
+        // A dismissed or replaced form must not send its pending submission.
+        if (popupSession !== this.connectPopupSession) {
+            return {success: false, cancelled: true};
+        }
         if (!hasPermission) {
             return {success: false, message: "missing_permissions", needPermission: true};
         }
@@ -147,8 +154,10 @@ class N8nStore {
 
             if (response?.success) {
                 this.syncStatus(response.data);
-                this.closeConnectPopup();
-                this.closeStatusPanel();
+                if (popupSession === this.connectPopupSession) {
+                    this.closeConnectPopup();
+                    this.closeStatusPanel();
+                }
                 return {success: true};
             }
 

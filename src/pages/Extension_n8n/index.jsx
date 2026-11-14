@@ -200,15 +200,18 @@ const ExtensionN8n = () => {
 
     const handleSubmitConnect = async () => {
         const password = n8nStore.password;
+        const popupSession = n8nStore.connectPopupSession;
         setError("");
 
         const hasPermission = await n8nStore.ensurePermissions();
+        if (popupSession !== n8nStore.connectPopupSession) return;
         if (!hasPermission) {
             n8nStore.requestConnectFlow();
             return;
         }
 
-        const result = await n8nStore.connect(password);
+        const result = await n8nStore.connect(password, popupSession);
+        if (popupSession !== n8nStore.connectPopupSession) return;
         if (!result.success) {
             if (result.needPermission) {
                 n8nStore.requestConnectFlow();
