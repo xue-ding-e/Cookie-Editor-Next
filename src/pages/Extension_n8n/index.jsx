@@ -1,5 +1,5 @@
 /*global chrome*/
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {observer} from "mobx-react-lite";
 import {n8nStore} from "../../mobx/n8n.store";
 import {extension} from "../../utils/chrome";
@@ -144,6 +144,7 @@ const HistoryTable = observer(() => {
 
 const ExtensionN8n = () => {
     const [error, setError] = useState("");
+    const pendingConnectSession = useRef(null);
 
     useEffect(() => {
         n8nStore.checkPermissions().then((granted) => {
@@ -201,25 +202,34 @@ const ExtensionN8n = () => {
     const handleSubmitConnect = async () => {
         const password = n8nStore.password;
         const popupSession = n8nStore.connectPopupSession;
+        if (pendingConnectSession.current === popupSession) return;
+        pendingConnectSession.current = popupSession;
         setError("");
 
-        const hasPermission = await n8nStore.ensurePermissions();
-        if (popupSession !== n8nStore.connectPopupSession) return;
-        if (!hasPermission) {
-            n8nStore.requestConnectFlow();
-            return;
-        }
-
-        const result = await n8nStore.connect(password, popupSession);
-        if (popupSession !== n8nStore.connectPopupSession) return;
-        if (!result.success) {
-            if (result.needPermission) {
+        try {
+            const hasPermission = await n8nStore.ensurePermissions();
+            if (popupSession !== n8nStore.connectPopupSession) return;
+            if (!hasPermission) {
                 n8nStore.requestConnectFlow();
                 return;
             }
-            setError(result.message);
-        } else {
-            setError("");
+
+            const result = await n8nStore.connect(password, popupSession);
+            if (popupSession !== n8nStore.connectPopupSession) return;
+            if (!result.success) {
+                if (result.needPermission) {
+                    n8nStore.requestConnectFlow();
+                    return;
+                }
+                setError(result.message);
+            } else {
+                setError("");
+            }
+        } finally {
+            // An old form must not unlock a replacement form's pending submission.
+            if (pendingConnectSession.current === popupSession) {
+                pendingConnectSession.current = null;
+            }
         }
     };
 
